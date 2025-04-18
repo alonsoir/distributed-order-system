@@ -1,6 +1,6 @@
 package com.example.order.service;
 
-import com.example.order.model.Order;
+import com.example.order.domain.Order;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
@@ -73,7 +73,7 @@ public class OrderService {
     record CompensationTask(Long orderId, String correlationId, String step, String action, String error, int retries) {}
 
     @Builder
-    private static class SagaStep {
+    static class SagaStep {
         String name;
         Supplier<Mono<?>> action;
         Supplier<Mono<?>> compensation;
@@ -117,7 +117,7 @@ public class OrderService {
                 .map(event -> new Order(orderId, "completed", correlationId));
     }
 
-    private Mono<OrderEvent> executeStep(SagaStep step) {
+    Mono<OrderEvent> executeStep(SagaStep step) {
         log.info("Executing step {} for order {} correlationId {}", step.name, step.orderId, step.correlationId);
         return step.action.get()
                 .flatMap(result -> {
@@ -153,11 +153,12 @@ public class OrderService {
                 });
     }
 
-    private Mono<Order> createOrder(Long orderId, String correlationId) {
+    Mono<Order> createOrder(Long orderId, String correlationId) {
         String eventId = UUID.randomUUID().toString();
         OrderCreatedEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, "pending");
-        return databaseClient.sql("INSERT INTO orders (id, status, correlation_id) VALUES (:id, 'pending', :correlationId)")
+        return databaseClient.sql("INSERT INTO orders (id, status, correlation_id) VALUES (:id, :status, :correlationId)")
                 .bind("id", orderId)
+                .bind("status", "pending")
                 .bind("correlationId", correlationId)
                 .then()
                 .then(databaseClient.sql("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)")
@@ -217,7 +218,7 @@ public class OrderService {
 
     private Order fallbackOrder(Long orderId) {
         log.warn("Returning fallback order for {}", orderId);
-        return new Order(orderId, "failed", null);
+        return new Order(orderId, "failed", "unknown");
     }
 
     private Mono<Order> onTimeout(Long orderId, String correlationId, String reason) {
