@@ -90,17 +90,26 @@ public class OrderService {
 
         Mono<Order> orderMono = executeOrderSaga(orderId, quantity, amount, correlationId)
                 .timeout(Duration.ofSeconds(15))
+                .doOnError(e -> log.error("Timeout or error in order saga for order {}: {}", orderId, e.getMessage()))
                 .onErrorResume(e -> onTimeout(orderId, correlationId, "global_timeout"));
 
-        return orderMono.transform(CircuitBreakerOperator.of(circuitBreaker))
-                .doOnSuccess(order -> meterRegistry.counter("orders_success").increment())
-                .doOnError(e -> meterRegistry.counter("orders_failed").increment())
+        return orderMono.transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
+                .doOnSubscribe(s -> log.info("Applying circuit breaker for order {}", orderId))
+                .doOnSuccess(order -> {
+                    log.info("Order {} processed successfully: {}", orderId, order);
+                    meterRegistry.counter("orders_success").increment();
+                })
+                .doOnError(e -> {
+                    log.error("Circuit breaker error for order {}: {}", orderId, e.getMessage());
+                    meterRegistry.counter("orders_failed").increment();
+                })
                 .onErrorResume(e -> {
                     log.error("Circuit breaker tripped for order {}: {}", orderId, e.getMessage());
                     return publishFailedEvent(orderId, correlationId, "circuit_breaker", e.getMessage())
                             .then(Mono.just(fallbackOrder(orderId)));
                 });
     }
+
 
     private Mono<Order> executeOrderSaga(Long orderId, int quantity, double amount, String correlationId) {
         return createOrder(orderId, correlationId)
@@ -119,8 +128,8 @@ public class OrderService {
 
     Mono<OrderEvent> executeStep(SagaStep step) {
         log.info("Executing step {} for order {} correlationId {}", step.name, step.orderId, step.correlationId);
-        return step.action.get()
-                .flatMap(result -> {
+        Mono<OrderEvent> stepMono = step.action.get()
+                .then(Mono.defer(() -> {
                     OrderEvent event = step.successEvent.apply(step.eventId);
                     return databaseClient.sql("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)")
                             .bind("event_type", event.getType())
@@ -132,18 +141,25 @@ public class OrderService {
                                     .bind("eventId", step.eventId)
                                     .then())
                             .then(publishEvent(event))
-                            .then(Mono.just(event));
+                            .thenReturn(event);
+                }))
+                .doOnSuccess(event -> log.info("Step {} completed for order {}", step.name, step.orderId))
+                .doOnError(e -> log.error("Error in step {} for order {}: {}", step.name, step.orderId, e.getMessage(), e));
+
+        return transactionalOperator.transactional(stepMono)
+                .doOnSuccess(event -> {
+                    log.info("Step {} transaction completed for order {}", step.name, step.orderId);
+                    meterRegistry.counter("saga_step_success", "step", step.name).increment();
                 })
-                .as(transactionalOperator::transactional)
-                .doOnSuccess(event -> meterRegistry.counter("saga_step_success", "step", step.name).increment())
+                .doOnError(e -> log.error("Transactional error in step {} for order {}: {}", step.name, step.orderId, e.getMessage(), e))
                 .onErrorResume(e -> {
-                    log.error("Step {} failed for order {}: {}", step.name, step.orderId, e.getMessage());
+                    log.error("Step {} failed for order {}: {}", step.name, step.orderId, e.getMessage(), e);
                     meterRegistry.counter("saga_step_failed", "step", step.name).increment();
                     return publishFailedEvent(step.orderId, step.correlationId, step.name, e.getMessage())
                             .then(step.compensation.get()
                                     .doOnSuccess(c -> log.info("Compensation {} executed for order {}", step.name, step.orderId))
                                     .onErrorResume(compE -> {
-                                        log.error("Compensation {} failed for order {}: {}", step.name, step.orderId, compE.getMessage());
+                                        log.error("Compensation {} failed for order {}: {}", step.name, step.orderId, compE.getMessage(), compE);
                                         return redisTemplate.opsForList()
                                                 .leftPush("failed-compensations",
                                                         new CompensationTask(step.orderId, step.correlationId, step.name, step.name, compE.getMessage(), 0))
@@ -156,31 +172,42 @@ public class OrderService {
     Mono<Order> createOrder(Long orderId, String correlationId) {
         String eventId = UUID.randomUUID().toString();
         OrderCreatedEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, "pending");
-        return databaseClient.sql("INSERT INTO orders (id, status, correlation_id) VALUES (:id, :status, :correlationId)")
+        log.info("Creating order {} with correlationId {}", orderId, correlationId);
+        Mono<Order> orderMono = databaseClient.sql("INSERT INTO orders (id, status, correlation_id) VALUES (:id, :status, :correlationId)")
                 .bind("id", orderId)
                 .bind("status", "pending")
                 .bind("correlationId", correlationId)
                 .then()
+                .doOnSuccess(v -> log.info("Inserted order {} into orders table", orderId))
                 .then(databaseClient.sql("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)")
                         .bind("event_type", event.getType())
                         .bind("correlationId", correlationId)
                         .bind("eventId", eventId)
                         .bind("payload", event.toJson())
                         .then())
+                .doOnSuccess(v -> log.info("Inserted outbox event for order {}", orderId))
                 .then(databaseClient.sql("INSERT INTO processed_events (event_id) VALUES (:eventId)")
                         .bind("eventId", eventId)
                         .then())
+                .doOnSuccess(v -> log.info("Inserted processed event for order {}", orderId))
                 .then(publishEvent(event))
+                .doOnSuccess(v -> log.info("Published event for order {}", orderId))
                 .then(Mono.just(new Order(orderId, "pending", correlationId)))
-                .as(transactionalOperator::transactional)
+                .doOnSuccess(v -> log.info("Created order object for {}", orderId))
+                .doOnError(e -> log.error("Error in createOrder for order {}: {}", orderId, e.getMessage(), e));
+
+        return transactionalOperator.transactional(orderMono)
                 .doOnSuccess(v -> log.info("Order {} created correlationId {}", orderId, correlationId))
-                .onErrorResume(e ->
-                        publishFailedEvent(orderId, correlationId, "createOrder", e.getMessage())
-                                .then(Mono.just(fallbackOrder(orderId))));
+                .doOnError(e -> log.error("Transactional error in createOrder for order {}: {}", orderId, e.getMessage(), e))
+                .onErrorResume(e -> {
+                    log.error("Transactional error in createOrder for order {}: {}", orderId, e.getMessage(), e);
+                    return publishFailedEvent(orderId, correlationId, "createOrder", e.getMessage())
+                            .then(Mono.just(fallbackOrder(orderId)));
+                });
     }
 
     private Mono<Void> publishEvent(OrderEvent event) {
-        CircuitBreaker redisCircuitBreaker = circuitBreakerRegistry.circuitBreaker("redisOperations");
+        CircuitBreaker redisCircuitBreaker = circuitBreakerRegistry.circuitBreaker("redisEventPublishing");
         Map<String, Object> eventMap = new HashMap<>();
         eventMap.put("orderId", event.getOrderId());
         eventMap.put("correlationId", event.getCorrelationId());
