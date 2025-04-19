@@ -180,7 +180,7 @@ public class OrderService {
     }
 
     private Mono<Void> publishEvent(OrderEvent event) {
-        CircuitBreaker redisCircuitBreaker = circuitBreakerRegistry.circuitBreaker("redis");
+        CircuitBreaker redisCircuitBreaker = circuitBreakerRegistry.circuitBreaker("redisOperations");
         Map<String, Object> eventMap = new HashMap<>();
         eventMap.put("orderId", event.getOrderId());
         eventMap.put("correlationId", event.getCorrelationId());
@@ -203,7 +203,10 @@ public class OrderService {
                             .bind("eventId", event.getEventId())
                             .bind("payload", event.toJson())
                             .then()
-                            .retryWhen(Retry.backoff(3, Duration.ofSeconds(1)))
+                            .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                                    .doAfterRetry(signal -> log.error("Retry attempt {} failed: {}", signal.totalRetries(), signal.failure()))
+                                    .onRetryExhaustedThrow((retrySpec, retrySignal) ->
+                                            new RuntimeException("Retry exhausted after 3 attempts", retrySignal.failure())))
                             .doOnSuccess(v -> log.info("Persisted event {} to outbox for order {}", event.getType(), event.getOrderId()))
                             .doOnError(e -> log.error("Failed to persist event {} to outbox for order {}: {}", event.getType(), event.getOrderId(), e.getMessage()));
                 });

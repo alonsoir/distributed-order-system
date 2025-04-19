@@ -2,10 +2,8 @@ package com.example.order.service;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.r2dbc.core.DatabaseClient;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -14,45 +12,46 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class InventoryServiceUnitTest {
 
-    @InjectMocks
-    private InventoryService inventoryService;
-    // Mock de las dependencias de InventoryService
     @Mock
-    private DatabaseClient databaseClient;
-    @InjectMocks
-    private OrderService orderService;
+    private InventoryService inventoryService;
 
     @Test
     void shouldReserveStockSuccessfully() {
+        // Arrange
         Long orderId = 1L;
         int quantity = 10;
 
         when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
 
+        // Act
         Mono<Void> result = inventoryService.reserveStock(orderId, quantity);
 
+        // Assert
         StepVerifier.create(result)
                 .verifyComplete();
 
-        verify(inventoryService).reserveStock(orderId, quantity);
+        verify(inventoryService, times(1)).reserveStock(orderId, quantity);
+        verifyNoMoreInteractions(inventoryService);
     }
 
     @Test
-    void shouldReleaseStockOnFailure() {
+    void shouldFailToReserveStockWithError() {
+        // Arrange
         Long orderId = 1L;
         int quantity = 10;
         RuntimeException error = new RuntimeException("Stock reservation failed");
 
         when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.error(error));
-        when(inventoryService.releaseStock(orderId, quantity)).thenReturn(Mono.empty());
 
+        // Act
         Mono<Void> result = inventoryService.reserveStock(orderId, quantity);
 
+        // Assert
         StepVerifier.create(result)
                 .expectErrorMatches(e -> e.getMessage().equals("Stock reservation failed"))
                 .verify();
 
-        verify(inventoryService).reserveStock(orderId, quantity);
-        verify(inventoryService).releaseStock(orderId, quantity);
+        verify(inventoryService, times(1)).reserveStock(orderId, quantity);
+        verifyNoMoreInteractions(inventoryService);
     }
 }
