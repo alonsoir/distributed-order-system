@@ -4,10 +4,13 @@ import com.example.order.domain.Order;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Service;
@@ -31,6 +34,39 @@ public class OrderService {
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final MeterRegistry meterRegistry;
     private final TransactionalOperator transactionalOperator;
+    private final Counter redisSuccessCounter;
+    private final Counter redisFailureCounter;
+    private final Counter redisRetryCounter;
+    private final Counter outboxSuccessCounter;
+    private final Counter outboxFailureCounter;
+    private final Counter outboxRetryCounter;
+
+
+    @Autowired
+    public OrderService(DatabaseClient databaseClient,
+                        ReactiveRedisTemplate<String, Object> redisTemplate,
+                        InventoryService inventoryService,
+                        CircuitBreakerRegistry circuitBreakerRegistry,
+                        MeterRegistry meterRegistry,
+                        TransactionalOperator transactionalOperator) {
+        this.databaseClient = databaseClient;
+        this.redisTemplate = redisTemplate;
+        this.inventoryService = inventoryService;
+        this.circuitBreakerRegistry = circuitBreakerRegistry;
+        this.meterRegistry = meterRegistry;  // Inyección de meterRegistry
+        this.transactionalOperator = transactionalOperator;
+
+        // Inicialización de contadores y temporizadores
+        this.redisSuccessCounter = meterRegistry.counter("event.publish.redis.success");
+        this.redisFailureCounter = meterRegistry.counter("event.publish.redis.failure");
+        this.redisRetryCounter = meterRegistry.counter("event.publish.redis.retry");
+
+        this.outboxSuccessCounter = meterRegistry.counter("event.publish.outbox.success");
+        this.outboxFailureCounter = meterRegistry.counter("event.publish.outbox.failure");
+        this.outboxRetryCounter = meterRegistry.counter("event.publish.outbox.retry");
+
+    }
+
 
     interface OrderEvent {
         Long getOrderId();
@@ -207,37 +243,89 @@ public class OrderService {
     }
 
     private Mono<Void> publishEvent(OrderEvent event) {
-        CircuitBreaker redisCircuitBreaker = circuitBreakerRegistry.circuitBreaker("redisEventPublishing");
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("redisEventPublishing");
+        Map<String, Object> eventMap = buildEventMap(event);
+
+        Mono<Void> redisPublish = Mono.defer(() -> {
+                    Timer.Sample sample = Timer.start(); // no hay campo: arrancamos el Sample
+                    return redisTemplate.opsForStream()
+                            .add("orders", eventMap)
+                            .doOnSuccess(record -> {
+                                log.info("Published event {} for order {}", event.getType(), event.getOrderId());
+                                redisSuccessCounter.increment();
+                            })
+                            .doOnError(e -> {
+                                log.error("Failed to publish event {} for order {}: {}", event.getType(), event.getOrderId(), e.getMessage());
+                                redisFailureCounter.increment();
+                            })
+                            .doFinally(signalType -> {
+                                // ahora sí, obtenemos el Timer justo al final
+                                Timer timer = meterRegistry.timer("event.publish.redis.timer");
+                                sample.stop(timer);
+                            })
+                            .then();
+                })
+                .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                        .doBeforeRetry(signal -> {
+                            log.warn("Retrying Redis publish for event {} (attempt {})", event.getType(), signal.totalRetries() + 1);
+                            redisRetryCounter.increment();
+                        })
+                        .onRetryExhaustedThrow((spec, signal) ->
+                                new RuntimeException("Redis publish retry exhausted", signal.failure()))
+                );
+
+        return redisPublish
+                .transform(CircuitBreakerOperator.of(circuitBreaker))
+                .onErrorResume(throwable -> handleRedisFailure(event, throwable));
+    }
+
+
+
+    private Map<String, Object> buildEventMap(OrderEvent event) {
         Map<String, Object> eventMap = new HashMap<>();
         eventMap.put("orderId", event.getOrderId());
         eventMap.put("correlationId", event.getCorrelationId());
         eventMap.put("eventId", event.getEventId());
         eventMap.put("type", event.getType());
         eventMap.put("payload", event.toJson());
-
-        Mono<Void> publishToRedis = redisTemplate.opsForStream()
-                .add("orders", eventMap)
-                .then()
-                .doOnSuccess(record -> log.info("Published event {} for order {}", event.getType(), event.getOrderId()))
-                .doOnError(e -> log.error("Failed to publish event {} for order {}: {}", event.getType(), event.getOrderId(), e.getMessage()));
-
-        return publishToRedis.transform(CircuitBreakerOperator.of(redisCircuitBreaker))
-                .onErrorResume(throwable -> {
-                    log.error("Redis circuit breaker tripped for event {}: {}", event.getType(), throwable.getMessage());
-                    return databaseClient.sql("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)")
-                            .bind("event_type", event.getType())
-                            .bind("correlationId", event.getCorrelationId())
-                            .bind("eventId", event.getEventId())
-                            .bind("payload", event.toJson())
-                            .then()
-                            .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
-                                    .doAfterRetry(signal -> log.error("Retry attempt {} failed: {}", signal.totalRetries(), signal.failure()))
-                                    .onRetryExhaustedThrow((retrySpec, retrySignal) ->
-                                            new RuntimeException("Retry exhausted after 3 attempts", retrySignal.failure())))
-                            .doOnSuccess(v -> log.info("Persisted event {} to outbox for order {}", event.getType(), event.getOrderId()))
-                            .doOnError(e -> log.error("Failed to persist event {} to outbox for order {}: {}", event.getType(), event.getOrderId(), e.getMessage()));
-                });
+        return eventMap;
     }
+
+
+    private Mono<Void> handleRedisFailure(OrderEvent event, Throwable throwable) {
+        log.error("Redis circuit breaker tripped for event {}: {}", event.getType(), throwable.getMessage());
+
+        return Mono.defer(() -> {
+                    Timer.Sample sample = Timer.start();
+                    return databaseClient
+                            .sql("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)")
+                            // … binds …
+                            .then()
+                            .doOnSuccess(v -> {
+                                outboxSuccessCounter.increment();
+                                log.info("Persisted event {} to outbox for order {}", event.getType(), event.getOrderId());
+                            })
+                            .doOnError(e -> {
+                                outboxFailureCounter.increment();
+                                log.error("Failed to persist event {} to outbox for order {}: {}", event.getType(), event.getOrderId(), e.getMessage());
+                            })
+                            .doFinally(st -> {
+                                Timer timer = meterRegistry.timer("event.publish.outbox.timer");
+                                sample.stop(timer);
+                            });
+                })
+                .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                        .doBeforeRetry(signal -> {
+                            outboxRetryCounter.increment();
+                            log.warn("Retrying Outbox persist for event {} (attempt {})", event.getType(), signal.totalRetries() + 1);
+                        })
+                        .onRetryExhaustedThrow((spec, signal) ->
+                                new RuntimeException("Outbox persist retry exhausted", signal.failure()))
+                );
+    }
+
+
+
 
     private Mono<Void> publishFailedEvent(Long orderId, String correlationId, String step, String reason) {
         String eventId = UUID.randomUUID().toString();

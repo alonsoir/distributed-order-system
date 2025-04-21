@@ -7,6 +7,7 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,6 +23,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -68,11 +70,49 @@ class CircuitBreakerUnitTest {
 
     @BeforeEach
     void setUp() {
-        reset(databaseClient, redisTemplate, inventoryService, circuitBreakerRegistry, orderCircuitBreaker, redisCircuitBreaker, meterRegistry, transactionalOperator, successCounter, failedCounter, circuitBreakerConfig);
-        lenient().when(orderCircuitBreaker.getCircuitBreakerConfig()).thenReturn(circuitBreakerConfig);
-        lenient().when(redisCircuitBreaker.getCircuitBreakerConfig()).thenReturn(circuitBreakerConfig);
-        lenient().when(circuitBreakerConfig.isWritableStackTraceEnabled()).thenReturn(true);
+        reset(databaseClient, redisTemplate, inventoryService,
+                circuitBreakerRegistry, orderCircuitBreaker, redisCircuitBreaker,
+                meterRegistry, transactionalOperator, successCounter, failedCounter, circuitBreakerConfig);
+
+        // -- counters de orders y saga steps (ya tenías estos lenient) --
+        lenient().when(meterRegistry.counter("orders_success")).thenReturn(successCounter);
+        lenient().when(meterRegistry.counter("orders_failed")).thenReturn(failedCounter);
+        lenient().when(meterRegistry.counter("saga_step_success", "step", "reserveStock"))
+                .thenReturn(successCounter);
+        lenient().when(meterRegistry.counter("saga_step_failed", "step", "reserveStock"))
+                .thenReturn(failedCounter);
+
+        // sólo necesitamos el timer de Redis, el de outbox no entra en estos tests
+        Timer mockRedisTimer = mock(Timer.class);
+        lenient().when(meterRegistry.timer("event.publish.redis.timer"))
+                .thenReturn(mockRedisTimer);
+
+        // counters de publicación de eventos
+        lenient().when(meterRegistry.counter("event.publish.redis.success"))
+                .thenReturn(successCounter);
+        lenient().when(meterRegistry.counter("event.publish.redis.failure"))
+                .thenReturn(failedCounter);
+        lenient().when(meterRegistry.counter("event.publish.redis.retry"))
+                .thenReturn(successCounter);
+
+        // outbox counters (lenient para que no rompan el “zero unnecessary stubbings”)
+        lenient().when(meterRegistry.counter("event.publish.outbox.success"))
+                .thenReturn(successCounter);
+        lenient().when(meterRegistry.counter("event.publish.outbox.failure"))
+                .thenReturn(failedCounter);
+        lenient().when(meterRegistry.counter("event.publish.outbox.retry"))
+                .thenReturn(successCounter);
+
+        // circuit breakers config stub
+        lenient().when(orderCircuitBreaker.getCircuitBreakerConfig())
+                .thenReturn(circuitBreakerConfig);
+        lenient().when(redisCircuitBreaker.getCircuitBreakerConfig())
+                .thenReturn(circuitBreakerConfig);
+        lenient().when(circuitBreakerConfig.isWritableStackTraceEnabled())
+                .thenReturn(true);
     }
+
+
 
     @Test
     @SuppressWarnings("unchecked")
