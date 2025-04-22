@@ -10,7 +10,6 @@ import io.micrometer.core.instrument.Timer;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Service;
@@ -21,6 +20,7 @@ import reactor.util.retry.Retry;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -34,15 +34,15 @@ public class OrderService {
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final MeterRegistry meterRegistry;
     private final TransactionalOperator transactionalOperator;
+
     private final Counter redisSuccessCounter;
     private final Counter redisFailureCounter;
     private final Counter redisRetryCounter;
     private final Counter outboxSuccessCounter;
     private final Counter outboxFailureCounter;
     private final Counter outboxRetryCounter;
+    private final Counter sagaCompensationRetryCounter;
 
-
-    @Autowired
     public OrderService(DatabaseClient databaseClient,
                         ReactiveRedisTemplate<String, Object> redisTemplate,
                         InventoryService inventoryService,
@@ -53,20 +53,17 @@ public class OrderService {
         this.redisTemplate = redisTemplate;
         this.inventoryService = inventoryService;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
-        this.meterRegistry = meterRegistry;  // Inyección de meterRegistry
+        this.meterRegistry = meterRegistry;
         this.transactionalOperator = transactionalOperator;
 
-        // Inicialización de contadores y temporizadores
         this.redisSuccessCounter = meterRegistry.counter("event.publish.redis.success");
         this.redisFailureCounter = meterRegistry.counter("event.publish.redis.failure");
         this.redisRetryCounter = meterRegistry.counter("event.publish.redis.retry");
-
         this.outboxSuccessCounter = meterRegistry.counter("event.publish.outbox.success");
         this.outboxFailureCounter = meterRegistry.counter("event.publish.outbox.failure");
         this.outboxRetryCounter = meterRegistry.counter("event.publish.outbox.retry");
-
+        this.sagaCompensationRetryCounter = meterRegistry.counter("saga_compensation_retry");
     }
-
 
     interface OrderEvent {
         Long getOrderId();
@@ -76,34 +73,121 @@ public class OrderService {
         String toJson();
     }
 
+    private static void validate(Long orderId, String correlationId, String eventId) {
+        if (orderId == null || orderId <= 0) {
+            throw new IllegalArgumentException("OrderId must be positive");
+        }
+        if (correlationId == null || correlationId.isBlank()) {
+            throw new IllegalArgumentException("CorrelationId cannot be null or empty");
+        }
+        if (eventId == null || eventId.isBlank()) {
+            throw new IllegalArgumentException("EventId cannot be null or empty");
+        }
+    }
+
     record OrderCreatedEvent(Long orderId, String correlationId, String eventId, String status) implements OrderEvent {
-        public String getType() { return "OrderCreated"; }
-        public String toJson() { return "{\"orderId\":" + getOrderId() + ",\"correlationId\":\"" + getCorrelationId() + "\",\"eventId\":\"" + eventId + "\",\"status\":\"" + status + "\"}"; }
+        public OrderCreatedEvent {
+            validate(orderId, correlationId, eventId);
+            if (status == null || status.isBlank()) {
+                throw new IllegalArgumentException("Status cannot be null or empty");
+            }
+        }
+
         @Override
-        public Long getOrderId() { return orderId; }
+        public Long getOrderId() {
+            return orderId;
+        }
+
         @Override
-        public String getCorrelationId() { return correlationId; }
-        public String getEventId() { return eventId; }
+        public String getCorrelationId() {
+            return correlationId;
+        }
+
+        @Override
+        public String getEventId() {
+            return eventId;
+        }
+
+        @Override
+        public String getType() {
+            return "OrderCreated";
+        }
+
+        @Override
+        public String toJson() {
+            return "{\"orderId\":" + orderId + ",\"correlationId\":\"" + correlationId + "\",\"eventId\":\"" + eventId + "\",\"status\":\"" + status + "\"}";
+        }
     }
 
     record StockReservedEvent(Long orderId, String correlationId, String eventId, int quantity) implements OrderEvent {
-        public String getType() { return "StockReserved"; }
-        public String toJson() { return "{\"orderId\":" + getOrderId() + ",\"correlationId\":\"" + getCorrelationId() + "\",\"eventId\":\"" + eventId + "\",\"quantity\":" + quantity + "}"; }
+        public StockReservedEvent {
+            validate(orderId, correlationId, eventId);
+            if (quantity <= 0) {
+                throw new IllegalArgumentException("Quantity must be positive");
+            }
+        }
+
         @Override
-        public Long getOrderId() { return orderId; }
+        public Long getOrderId() {
+            return orderId;
+        }
+
         @Override
-        public String getCorrelationId() { return correlationId; }
-        public String getEventId() { return eventId; }
+        public String getCorrelationId() {
+            return correlationId;
+        }
+
+        @Override
+        public String getEventId() {
+            return eventId;
+        }
+
+        @Override
+        public String getType() {
+            return "StockReserved";
+        }
+
+        @Override
+        public String toJson() {
+            return "{\"orderId\":" + orderId + ",\"correlationId\":\"" + correlationId + "\",\"eventId\":\"" + eventId + "\",\"quantity\":" + quantity + "}";
+        }
     }
 
     record OrderFailedEvent(Long orderId, String correlationId, String eventId, String step, String reason) implements OrderEvent {
-        public String getType() { return "OrderFailed"; }
-        public String toJson() { return "{\"orderId\":" + getOrderId() + ",\"correlationId\":\"" + getCorrelationId() + "\",\"eventId\":\"" + eventId + "\",\"step\":\"" + step + "\",\"reason\":\"" + reason + "\"}"; }
+        public OrderFailedEvent {
+            validate(orderId, correlationId, eventId);
+            if (step == null || step.isBlank()) {
+                throw new IllegalArgumentException("Step cannot be null or empty");
+            }
+            if (reason == null || reason.isBlank()) {
+                throw new IllegalArgumentException("Reason cannot be null or empty");
+            }
+        }
+
         @Override
-        public Long getOrderId() { return orderId; }
+        public Long getOrderId() {
+            return orderId;
+        }
+
         @Override
-        public String getCorrelationId() { return correlationId; }
-        public String getEventId() { return eventId; }
+        public String getCorrelationId() {
+            return correlationId;
+        }
+
+        @Override
+        public String getEventId() {
+            return eventId;
+        }
+
+        @Override
+        public String getType() {
+            return "OrderFailed";
+        }
+
+        @Override
+        public String toJson() {
+            return "{\"orderId\":" + orderId + ",\"correlationId\":\"" + correlationId + "\",\"eventId\":\"" + eventId + "\",\"step\":\"" + step + "\",\"reason\":\"" + reason + "\"}";
+        }
     }
 
     record CompensationTask(Long orderId, String correlationId, String step, String action, String error, int retries) {}
@@ -112,11 +196,23 @@ public class OrderService {
     static class SagaStep {
         String name;
         Supplier<Mono<?>> action;
-        Supplier<Mono<?>> compensation;
         java.util.function.Function<String, OrderEvent> successEvent;
+        Supplier<Mono<?>> compensation;
         Long orderId;
         String correlationId;
         String eventId;
+
+        SagaStep(String name, Supplier<Mono<?>> action, Supplier<Mono<?>> compensation,
+                 java.util.function.Function<String, OrderEvent> successEvent,
+                 Long orderId, String correlationId, String eventId) {
+            this.name = Objects.requireNonNull(name, "Step name cannot be null");
+            this.action = Objects.requireNonNull(action, "Action cannot be null");
+            this.compensation = Objects.requireNonNull(compensation, "Compensation cannot be null");
+            this.successEvent = Objects.requireNonNull(successEvent, "Success event cannot be null");
+            this.orderId = Objects.requireNonNull(orderId, "OrderId cannot be null");
+            this.correlationId = Objects.requireNonNull(correlationId, "CorrelationId cannot be null");
+            this.eventId = Objects.requireNonNull(eventId, "EventId cannot be null");
+        }
     }
 
     public Mono<Order> processOrder(Long orderId, int quantity, double amount) {
@@ -146,7 +242,6 @@ public class OrderService {
                 });
     }
 
-
     private Mono<Order> executeOrderSaga(Long orderId, int quantity, double amount, String correlationId) {
         return createOrder(orderId, correlationId)
                 .flatMap(order -> executeStep(
@@ -159,7 +254,16 @@ public class OrderService {
                                 .correlationId(correlationId)
                                 .eventId(UUID.randomUUID().toString())
                                 .build()))
-                .map(event -> new Order(orderId, "completed", correlationId));
+                .flatMap(event -> databaseClient.sql("UPDATE orders SET status = :status WHERE id = :id")
+                        .bind("status", "completed")
+                        .bind("id", orderId)
+                        .then()
+                        .thenReturn(new Order(orderId, "completed", correlationId)))
+                .onErrorResume(e -> databaseClient.sql("UPDATE orders SET status = :status WHERE id = :id")
+                        .bind("status", "failed")
+                        .bind("id", orderId)
+                        .then()
+                        .thenReturn(fallbackOrder(orderId)));
     }
 
     Mono<OrderEvent> executeStep(SagaStep step) {
@@ -193,6 +297,12 @@ public class OrderService {
                     meterRegistry.counter("saga_step_failed", "step", step.name).increment();
                     return publishFailedEvent(step.orderId, step.correlationId, step.name, e.getMessage())
                             .then(step.compensation.get()
+                                    .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                                            .doBeforeRetry(signal -> {
+                                                log.warn("Retrying compensation for step {} (attempt {})", step.name, signal.totalRetries() + 1);
+                                                sagaCompensationRetryCounter.increment();
+                                            })
+                                            .onRetryExhaustedThrow((spec, signal) -> signal.failure()))
                                     .doOnSuccess(c -> log.info("Compensation {} executed for order {}", step.name, step.orderId))
                                     .onErrorResume(compE -> {
                                         log.error("Compensation {} failed for order {}: {}", step.name, step.orderId, compE.getMessage(), compE);
@@ -242,12 +352,11 @@ public class OrderService {
                 });
     }
 
-    private Mono<Void> publishEvent(OrderEvent event) {
+    Mono<Void> publishEvent(OrderEvent event) {
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("redisEventPublishing");
-        Map<String, Object> eventMap = buildEventMap(event);
-
-        Mono<Void> redisPublish = Mono.defer(() -> {
-                    Timer.Sample sample = Timer.start(); // no hay campo: arrancamos el Sample
+        return Mono.defer(() -> {
+                    Map<String, Object> eventMap = buildEventMap(event);
+                    Timer.Sample sample = Timer.start();
                     return redisTemplate.opsForStream()
                             .add("orders", eventMap)
                             .doOnSuccess(record -> {
@@ -259,7 +368,6 @@ public class OrderService {
                                 redisFailureCounter.increment();
                             })
                             .doFinally(signalType -> {
-                                // ahora sí, obtenemos el Timer justo al final
                                 Timer timer = meterRegistry.timer("event.publish.redis.timer");
                                 sample.stop(timer);
                             })
@@ -270,18 +378,18 @@ public class OrderService {
                             log.warn("Retrying Redis publish for event {} (attempt {})", event.getType(), signal.totalRetries() + 1);
                             redisRetryCounter.increment();
                         })
-                        .onRetryExhaustedThrow((spec, signal) ->
-                                new RuntimeException("Redis publish retry exhausted", signal.failure()))
-                );
-
-        return redisPublish
+                        .onRetryExhaustedThrow((spec, signal) -> new RuntimeException("Redis publish retry exhausted", signal.failure())))
                 .transform(CircuitBreakerOperator.of(circuitBreaker))
                 .onErrorResume(throwable -> handleRedisFailure(event, throwable));
     }
 
-
-
     private Map<String, Object> buildEventMap(OrderEvent event) {
+        if (event.getType() == null || event.getType().isBlank()) {
+            throw new IllegalArgumentException("Event type cannot be null or empty");
+        }
+        if (event.toJson() == null) {
+            throw new IllegalArgumentException("Event JSON cannot be null");
+        }
         Map<String, Object> eventMap = new HashMap<>();
         eventMap.put("orderId", event.getOrderId());
         eventMap.put("correlationId", event.getCorrelationId());
@@ -291,15 +399,16 @@ public class OrderService {
         return eventMap;
     }
 
-
     private Mono<Void> handleRedisFailure(OrderEvent event, Throwable throwable) {
         log.error("Redis circuit breaker tripped for event {}: {}", event.getType(), throwable.getMessage());
-
         return Mono.defer(() -> {
                     Timer.Sample sample = Timer.start();
                     return databaseClient
                             .sql("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)")
-                            // … binds …
+                            .bind("event_type", event.getType())
+                            .bind("correlationId", event.getCorrelationId())
+                            .bind("eventId", event.getEventId())
+                            .bind("payload", event.toJson())
                             .then()
                             .doOnSuccess(v -> {
                                 outboxSuccessCounter.increment();
@@ -319,13 +428,8 @@ public class OrderService {
                             outboxRetryCounter.increment();
                             log.warn("Retrying Outbox persist for event {} (attempt {})", event.getType(), signal.totalRetries() + 1);
                         })
-                        .onRetryExhaustedThrow((spec, signal) ->
-                                new RuntimeException("Outbox persist retry exhausted", signal.failure()))
-                );
+                        .onRetryExhaustedThrow((spec, signal) -> new RuntimeException("Outbox persist retry exhausted", signal.failure())));
     }
-
-
-
 
     private Mono<Void> publishFailedEvent(Long orderId, String correlationId, String step, String reason) {
         String eventId = UUID.randomUUID().toString();
