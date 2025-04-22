@@ -26,6 +26,20 @@ public class RedisConfig {
     public static final String EVENT_TOPIC = "order.events";
 
     @Bean
+    ReactiveRedisTemplate<String, String> stringReactiveRedisTemplate(ReactiveRedisConnectionFactory factory) {
+        StringRedisSerializer stringSerializer = new StringRedisSerializer();
+        RedisSerializationContext<String, String> context = RedisSerializationContext
+                .<String, String>newSerializationContext(stringSerializer)
+                .key(stringSerializer)
+                .value(stringSerializer)
+                .hashKey(stringSerializer)
+                .hashValue(stringSerializer)
+                .build();
+
+        return new ReactiveRedisTemplate<>(factory, context);
+    }
+
+    @Bean
     public ObjectMapper redisObjectMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.activateDefaultTyping(
@@ -59,18 +73,19 @@ public class RedisConfig {
             ReactiveRedisConnectionFactory connectionFactory,
             ObjectMapper redisObjectMapper) {
 
-        Jackson2JsonRedisSerializer<Map> serializer =
-                new Jackson2JsonRedisSerializer<>(redisObjectMapper, Map.class);
+        Jackson2JsonRedisSerializer<Map<String, Object>> serializer =
+                new Jackson2JsonRedisSerializer<>(redisObjectMapper.getTypeFactory().constructMapType(Map.class, String.class, Object.class));
 
         RedisSerializationContext<String, Map<String, Object>> context = RedisSerializationContext
                 .<String, Map<String, Object>>newSerializationContext(new StringRedisSerializer())
-                .value((RedisSerializationContext.SerializationPair<Map<String, Object>>) serializer)
+                .value(RedisSerializationContext.SerializationPair.fromSerializer(serializer))
                 .hashKey(new StringRedisSerializer())
-                .hashValue(serializer)
+                .hashValue(RedisSerializationContext.SerializationPair.fromSerializer(serializer))
                 .build();
 
         return new ReactiveRedisTemplate<>(connectionFactory, context);
     }
+
 
     @Bean
     @Profile("!test")
