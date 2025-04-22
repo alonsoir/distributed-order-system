@@ -1,6 +1,7 @@
 package com.example.order.service;
 
 import com.example.order.domain.Order;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,11 +30,15 @@ class DatabaseClientIntegrationTest {
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.r2dbc.url", () -> "r2dbc:mysql://" + mysql.getHost() + ":" + mysql.getFirstMappedPort() + "/orders");
+        registry.add("spring.r2dbc.url", () -> "r2dbc:mysql://" + mysql.getHost() + ":" + mysql.getFirstMappedPort() + "/orders?sslMode=DISABLED");
         registry.add("spring.r2dbc.username", mysql::getUsername);
         registry.add("spring.r2dbc.password", mysql::getPassword);
     }
-
+    @AfterEach
+    void cleanup() {
+        // Opcional: limpiar la base de datos después de cada test
+        databaseClient.sql("DELETE FROM orders").then().block();
+    }
     @Test
     void shouldInsertAndRetrieveOrder() {
         Long orderId = 1L;

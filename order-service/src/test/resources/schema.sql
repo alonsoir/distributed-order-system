@@ -18,8 +18,6 @@ CREATE TABLE processed_events (
     processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-DELIMITER //
-
 CREATE PROCEDURE insert_outbox(
     IN p_event_type VARCHAR(100),
     IN p_correlation_id VARCHAR(255),
@@ -29,6 +27,4 @@ CREATE PROCEDURE insert_outbox(
 BEGIN
     INSERT INTO outbox (event_type, correlation_id, event_id, payload)
     VALUES (p_event_type, p_correlation_id, p_event_id, p_payload);
-END //
-
-DELIMITER ;
+END;
