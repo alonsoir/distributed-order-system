@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.Timer;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Service;
@@ -43,6 +44,7 @@ public class OrderService {
     private final Counter outboxRetryCounter;
     private final Counter sagaCompensationRetryCounter;
 
+    @Autowired
     public OrderService(DatabaseClient databaseClient,
                         ReactiveRedisTemplate<String, Object> redisTemplate,
                         InventoryService inventoryService,
@@ -202,13 +204,18 @@ public class OrderService {
         String correlationId;
         String eventId;
 
-        SagaStep(String name, Supplier<Mono<?>> action, Supplier<Mono<?>> compensation,
+        // Match the parameter order with the field order and builder expectations
+        SagaStep(String name,
+                 Supplier<Mono<?>> action,
                  java.util.function.Function<String, OrderEvent> successEvent,
-                 Long orderId, String correlationId, String eventId) {
+                 Supplier<Mono<?>> compensation,
+                 Long orderId,
+                 String correlationId,
+                 String eventId) {
             this.name = Objects.requireNonNull(name, "Step name cannot be null");
             this.action = Objects.requireNonNull(action, "Action cannot be null");
-            this.compensation = Objects.requireNonNull(compensation, "Compensation cannot be null");
             this.successEvent = Objects.requireNonNull(successEvent, "Success event cannot be null");
+            this.compensation = Objects.requireNonNull(compensation, "Compensation cannot be null");
             this.orderId = Objects.requireNonNull(orderId, "OrderId cannot be null");
             this.correlationId = Objects.requireNonNull(correlationId, "CorrelationId cannot be null");
             this.eventId = Objects.requireNonNull(eventId, "EventId cannot be null");
