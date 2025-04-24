@@ -4,15 +4,18 @@ import com.example.order.domain.Order;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
+import io.lettuce.core.RedisConnectionException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
@@ -25,10 +28,13 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+@EnableScheduling
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class OrderService {
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+    private static final int MAX_RETRIES = 10; // Maximum retries for dead-letter queue events
+
     private final DatabaseClient databaseClient;
     private final ReactiveRedisTemplate<String, Object> redisTemplate;
     private final InventoryService inventoryService;
@@ -43,29 +49,6 @@ public class OrderService {
     private final Counter outboxFailureCounter;
     private final Counter outboxRetryCounter;
     private final Counter sagaCompensationRetryCounter;
-
-    @Autowired
-    public OrderService(DatabaseClient databaseClient,
-                        ReactiveRedisTemplate<String, Object> redisTemplate,
-                        InventoryService inventoryService,
-                        CircuitBreakerRegistry circuitBreakerRegistry,
-                        MeterRegistry meterRegistry,
-                        TransactionalOperator transactionalOperator) {
-        this.databaseClient = databaseClient;
-        this.redisTemplate = redisTemplate;
-        this.inventoryService = inventoryService;
-        this.circuitBreakerRegistry = circuitBreakerRegistry;
-        this.meterRegistry = meterRegistry;
-        this.transactionalOperator = transactionalOperator;
-
-        this.redisSuccessCounter = meterRegistry.counter("event.publish.redis.success");
-        this.redisFailureCounter = meterRegistry.counter("event.publish.redis.failure");
-        this.redisRetryCounter = meterRegistry.counter("event.publish.redis.retry");
-        this.outboxSuccessCounter = meterRegistry.counter("event.publish.outbox.success");
-        this.outboxFailureCounter = meterRegistry.counter("event.publish.outbox.failure");
-        this.outboxRetryCounter = meterRegistry.counter("event.publish.outbox.retry");
-        this.sagaCompensationRetryCounter = meterRegistry.counter("saga_compensation_retry");
-    }
 
     interface OrderEvent {
         Long getOrderId();
@@ -117,7 +100,11 @@ public class OrderService {
 
         @Override
         public String toJson() {
-            return "{\"orderId\":" + orderId + ",\"correlationId\":\"" + correlationId + "\",\"eventId\":\"" + eventId + "\",\"status\":\"" + status + "\"}";
+            return "{\"orderId\":" + orderId +
+                    ",\"correlationId\":\"" + correlationId +
+                    "\",\"eventId\":\"" + eventId +
+                    "\",\"status\":\"" + status +
+                    "\",\"type\":\"" + getType() + "\"}";
         }
     }
 
@@ -151,7 +138,11 @@ public class OrderService {
 
         @Override
         public String toJson() {
-            return "{\"orderId\":" + orderId + ",\"correlationId\":\"" + correlationId + "\",\"eventId\":\"" + eventId + "\",\"quantity\":" + quantity + "}";
+            return "{\"orderId\":" + orderId +
+                    ",\"correlationId\":\"" + correlationId +
+                    "\",\"eventId\":\"" + eventId +
+                    "\",\"quantity\":" + quantity +
+                    ",\"type\":\"" + getType() + "\"}";
         }
     }
 
@@ -188,7 +179,12 @@ public class OrderService {
 
         @Override
         public String toJson() {
-            return "{\"orderId\":" + orderId + ",\"correlationId\":\"" + correlationId + "\",\"eventId\":\"" + eventId + "\",\"step\":\"" + step + "\",\"reason\":\"" + reason + "\"}";
+            return "{\"orderId\":" + orderId +
+                    ",\"correlationId\":\"" + correlationId +
+                    "\",\"eventId\":\"" + eventId +
+                    "\",\"step\":\"" + step +
+                    "\",\"reason\":\"" + reason +
+                    "\",\"type\":\"" + getType() + "\"}";
         }
     }
 
@@ -204,7 +200,6 @@ public class OrderService {
         String correlationId;
         String eventId;
 
-        // Match the parameter order with the field order and builder expectations
         SagaStep(String name,
                  Supplier<Mono<?>> action,
                  java.util.function.Function<String, OrderEvent> successEvent,
@@ -381,6 +376,7 @@ public class OrderService {
                             .then();
                 })
                 .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                        .filter(throwable -> throwable instanceof RedisConnectionException)
                         .doBeforeRetry(signal -> {
                             log.warn("Retrying Redis publish for event {} (attempt {})", event.getType(), signal.totalRetries() + 1);
                             redisRetryCounter.increment();
@@ -417,6 +413,7 @@ public class OrderService {
                             .bind("eventId", event.getEventId())
                             .bind("payload", event.toJson())
                             .then()
+                            .doOnSubscribe(s -> log.info("Attempting outbox insertion for event: {}", event.getType()))
                             .doOnSuccess(v -> {
                                 outboxSuccessCounter.increment();
                                 log.info("Persisted event {} to outbox for order {}", event.getType(), event.getOrderId());
@@ -435,7 +432,35 @@ public class OrderService {
                             outboxRetryCounter.increment();
                             log.warn("Retrying Outbox persist for event {} (attempt {})", event.getType(), signal.totalRetries() + 1);
                         })
-                        .onRetryExhaustedThrow((spec, signal) -> new RuntimeException("Outbox persist retry exhausted", signal.failure())));
+                        .onRetryExhaustedThrow((spec, signal) -> signal.failure()))
+                .onErrorResume(outboxError -> {
+                    log.error("CRITICAL: Persistent failure to persist event {} to outbox for order {} after retries: {}",
+                            event.getType(), event.getOrderId(), outboxError.getMessage(), outboxError);
+
+                    Map<String, Object> failedEvent = new HashMap<>();
+                    failedEvent.put("orderId", event.getOrderId());
+                    failedEvent.put("correlationId", event.getCorrelationId());
+                    failedEvent.put("eventId", event.getEventId());
+                    failedEvent.put("type", event.getType());
+                    failedEvent.put("payload", event.toJson());
+                    failedEvent.put("error", outboxError.getMessage());
+                    failedEvent.put("timestamp", System.currentTimeMillis());
+                    failedEvent.put("retries", 0); // Initialize retries for dead-letter queue
+
+                    return redisTemplate.opsForList()
+                            .leftPush("failed-outbox-events", failedEvent)
+                            .doOnSuccess(v -> {
+                                meterRegistry.counter("dead_letter_queue_success").increment();
+                                log.info("Pushed failed event {} to dead-letter queue for order {}",
+                                        event.getType(), event.getOrderId());
+                            })
+                            .doOnError(e -> {
+                                meterRegistry.counter("dead_letter_queue_failure").increment();
+                                log.error("Failed to push event {} to dead-letter queue for order {}: {}",
+                                        event.getType(), event.getOrderId(), e.getMessage(), e);
+                            })
+                            .then(Mono.error(new RuntimeException("Outbox persist retry exhausted, event pushed to dead-letter queue", outboxError)));
+                });
     }
 
     private Mono<Void> publishFailedEvent(Long orderId, String correlationId, String step, String reason) {
@@ -454,5 +479,89 @@ public class OrderService {
         log.error("Timeout for order {}: {}", orderId, reason);
         return publishFailedEvent(orderId, correlationId, "timeout", reason)
                 .then(Mono.just(fallbackOrder(orderId)));
+    }
+
+    @Scheduled(fixedDelay = 60000)
+    public void processFailedOutboxEvents() {
+        redisTemplate.opsForList()
+                .rightPop("failed-outbox-events")
+                .flatMap(eventObj -> {
+                    if (!(eventObj instanceof Map)) {
+                        log.error("CRITICAL: Invalid event format in failed-outbox-events, expected Map, got {}",
+                                eventObj.getClass().getName());
+                        return Mono.empty();
+                    }
+
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> event = (Map<String, Object>) eventObj;
+
+                    if (!event.containsKey("type") || !event.containsKey("correlationId") ||
+                            !event.containsKey("eventId") || !event.containsKey("payload")) {
+                        log.error("CRITICAL: Incomplete event in failed-outbox-events, missing required fields: {}", event);
+                        return Mono.empty();
+                    }
+
+                    String eventType = Objects.toString(event.get("type"));
+                    String correlationId = Objects.toString(event.get("correlationId"));
+                    String eventId = Objects.toString(event.get("eventId"));
+                    String payload = Objects.toString(event.get("payload"));
+                    Long orderId = event.get("orderId") != null ? ((Number) event.get("orderId")).longValue() : null;
+                    int retries = event.get("retries") != null ? ((Number) event.get("retries")).intValue() : 0;
+
+                    if (retries >= MAX_RETRIES) {
+                        log.error("CRITICAL: Event {} exceeded retry limit ({}) for order {}, discarding",
+                                eventType, MAX_RETRIES, orderId);
+                        return Mono.empty();
+                    }
+
+                    Timer.Sample sample = Timer.start();
+                    return databaseClient
+                            .sql("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)")
+                            .bind("event_type", eventType)
+                            .bind("correlationId", correlationId)
+                            .bind("eventId", eventId)
+                            .bind("payload", payload)
+                            .then()
+                            .doOnSuccess(v -> {
+                                meterRegistry.counter("dead_letter_queue_success").increment();
+                                log.info("Successfully reprocessed event {} from dead-letter queue for order {}",
+                                        eventType, orderId);
+                            })
+                            .doOnError(e -> {
+                                meterRegistry.counter("dead_letter_queue_failure").increment();
+                                log.error("Failed to reprocess event {} from dead-letter queue for order {}: {}",
+                                        eventType, orderId, e.getMessage());
+                            })
+                            .doFinally(st -> {
+                                Timer timer = meterRegistry.timer("dead_letter_queue_process.timer");
+                                sample.stop(timer);
+                            })
+                            .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                                    .doBeforeRetry(signal -> log.warn("Retrying outbox insertion from dead-letter queue for event {} (attempt {})",
+                                            eventType, signal.totalRetries() + 1))
+                                    .onRetryExhaustedThrow((spec, signal) -> signal.failure()))
+                            .onErrorResume(throwable -> {
+                                log.error("CRITICAL: Persistent failure to reprocess event {} from dead-letter queue for order {}: {}",
+                                        eventType, orderId, throwable.getMessage(), throwable);
+                                event.put("retries", retries + 1); // Increment retries
+                                return redisTemplate.opsForList()
+                                        .leftPush("failed-outbox-events", event)
+                                        .doOnSuccess(v -> log.info("Requeued failed event {} to dead-letter queue for order {} with retries {}",
+                                                eventType, orderId, retries + 1))
+                                        .doOnError(e -> log.error("Failed to requeue event {} to dead-letter queue: {}",
+                                                eventType, e.getMessage()))
+                                        .then(Mono.empty());
+                            });
+                })
+                .doOnError(e -> log.error("Error popping event from failed-outbox-events: {}", e.getMessage()))
+                .onErrorResume(e -> Mono.empty())
+                .subscribe();
+    }
+
+    @Scheduled(fixedRate = 300000) // Every 5 minutes
+    public void monitorFailedOutboxQueue() {
+        redisTemplate.opsForList()
+                .size("failed-outbox-events")
+                .subscribe(size -> meterRegistry.gauge("failed_outbox_events_queue_length", size));
     }
 }

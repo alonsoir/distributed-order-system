@@ -188,8 +188,8 @@
           <argLine>
             --add-opens java.base/java.lang=ALL-UNNAMED
             -javaagent:${settings.localRepository}/org/mockito/mockito-core/5.14.1/mockito-core-5.14.1.jar
+            -Xshare:off
           </argLine>
-          <argLine>-Xshare:off</argLine>
         </configuration>
       </plugin>
     </plugins>
