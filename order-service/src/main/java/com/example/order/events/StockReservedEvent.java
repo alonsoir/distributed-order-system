@@ -3,21 +3,21 @@ package com.example.order.events;
 import lombok.Getter;
 
 @Getter
-public class OrderCreatedEvent implements OrderEvent {
+public class StockReservedEvent implements OrderEvent {
     private final Long orderId;
     private final String correlationId;
     private final String eventId;
-    private final String status;
+    private final int quantity;
 
-    public OrderCreatedEvent(Long orderId, String correlationId, String eventId, String status) {
+    public StockReservedEvent(Long orderId, String correlationId, String eventId, int quantity) {
         validate(orderId, correlationId, eventId);
-        if (status == null || status.isBlank()) {
-            throw new IllegalArgumentException("Status cannot be null or empty");
+        if (quantity <= 0) {
+            throw new IllegalArgumentException("Quantity must be positive");
         }
         this.orderId = orderId;
         this.correlationId = correlationId;
         this.eventId = eventId;
-        this.status = status;
+        this.quantity = quantity;
     }
 
     private static void validate(Long orderId, String correlationId, String eventId) {
@@ -34,7 +34,7 @@ public class OrderCreatedEvent implements OrderEvent {
 
     @Override
     public OrderEventType getType() {
-        return OrderEventType.ORDER_CREATED;
+        return OrderEventType.STOCK_RESERVED;
     }
 
     @Override
@@ -42,7 +42,7 @@ public class OrderCreatedEvent implements OrderEvent {
         return "{\"orderId\":" + orderId +
                 ",\"correlationId\":\"" + correlationId +
                 "\",\"eventId\":\"" + eventId +
-                "\",\"status\":\"" + status +
+                "\",\"quantity\":" + quantity +
                 "\",\"type\":\"" + getType().name() + "\"}";
     }
 }

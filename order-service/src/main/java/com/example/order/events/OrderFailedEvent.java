@@ -3,21 +3,26 @@ package com.example.order.events;
 import lombok.Getter;
 
 @Getter
-public class OrderCreatedEvent implements OrderEvent {
+public class OrderFailedEvent implements OrderEvent {
     private final Long orderId;
     private final String correlationId;
     private final String eventId;
-    private final String status;
+    private final String step;
+    private final String reason;
 
-    public OrderCreatedEvent(Long orderId, String correlationId, String eventId, String status) {
+    public OrderFailedEvent(Long orderId, String correlationId, String eventId, String step, String reason) {
         validate(orderId, correlationId, eventId);
-        if (status == null || status.isBlank()) {
-            throw new IllegalArgumentException("Status cannot be null or empty");
+        if (step == null || step.isBlank()) {
+            throw new IllegalArgumentException("Step cannot be null or empty");
+        }
+        if (reason == null || reason.isBlank()) {
+            throw new IllegalArgumentException("Reason cannot be null or empty");
         }
         this.orderId = orderId;
         this.correlationId = correlationId;
         this.eventId = eventId;
-        this.status = status;
+        this.step = step;
+        this.reason = reason;
     }
 
     private static void validate(Long orderId, String correlationId, String eventId) {
@@ -34,7 +39,7 @@ public class OrderCreatedEvent implements OrderEvent {
 
     @Override
     public OrderEventType getType() {
-        return OrderEventType.ORDER_CREATED;
+        return OrderEventType.ORDER_FAILED;
     }
 
     @Override
@@ -42,7 +47,8 @@ public class OrderCreatedEvent implements OrderEvent {
         return "{\"orderId\":" + orderId +
                 ",\"correlationId\":\"" + correlationId +
                 "\",\"eventId\":\"" + eventId +
-                "\",\"status\":\"" + status +
+                "\",\"step\":\"" + step +
+                "\",\"reason\":\"" + reason +
                 "\",\"type\":\"" + getType().name() + "\"}";
     }
 }

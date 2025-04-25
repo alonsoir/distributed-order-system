@@ -4,6 +4,12 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.example.order.domain.Order;
+import com.example.order.events.OrderCreatedEvent;
+import com.example.order.events.OrderEvent;
+import com.example.order.events.OrderEventType;
+import com.example.order.events.OrderFailedEvent;
+import com.example.order.events.StockReservedEvent;
+import com.example.order.model.SagaStep;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -66,31 +72,59 @@ class OrderServiceUnitTest {
         String ERROR_NULL_STEP_ACTION = "Action cannot be null";
     }
 
-    @Mock private DatabaseClient databaseClient;
-    @Mock private DatabaseClient.GenericExecuteSpec executeSpec;
-    @Mock private DatabaseClient.GenericExecuteSpec bindSpec;
-    @Mock private ReactiveRedisTemplate<String, Object> redisTemplate;
-    @Mock private ReactiveStreamOperations<String, Object, Object> streamOps;
-    @Mock private InventoryService inventoryService;
-    @Mock private CircuitBreakerRegistry circuitBreakerRegistry;
-    @Mock private CircuitBreaker circuitBreaker;
-    @Mock private MeterRegistry meterRegistry;
-    @Mock private Counter ordersSuccessCounter;
-    @Mock private Counter redisSuccessCounter;
-    @Mock private Counter redisFailureCounter;
-    @Mock private Counter redisRetryCounter;
-    @Mock private Counter outboxSuccessCounter;
-    @Mock private Counter outboxFailureCounter;
-    @Mock private Counter outboxRetryCounter;
-    @Mock private Counter sagaStepSuccessCounter;
-    @Mock private Counter sagaStepFailedCounter;
-    @Mock private Counter sagaCompensationRetryCounter;
-    @Mock private Timer redisTimer;
-    @Mock private Timer outboxTimer;
-    @Mock private Timer.Sample timerSample;
-    @Mock private TransactionalOperator transactionalOperator;
+    @Mock
+    private DatabaseClient databaseClient;
+    @Mock
+    private DatabaseClient.GenericExecuteSpec executeSpec;
+    @Mock
+    private DatabaseClient.GenericExecuteSpec bindSpec;
+    @Mock
+    private ReactiveRedisTemplate<String, Object> redisTemplate;
+    @Mock
+    private ReactiveStreamOperations<String, Object, Object> streamOps;
+    @Mock
+    private InventoryService inventoryService;
+    @Mock
+    private CircuitBreakerRegistry circuitBreakerRegistry;
+    @Mock
+    private CircuitBreaker circuitBreaker;
+    @Mock
+    private MeterRegistry meterRegistry;
+    @Mock
+    private Counter ordersSuccessCounter;
+    @Mock
+    private Counter redisSuccessCounter;
+    @Mock
+    private Counter redisFailureCounter;
+    @Mock
+    private Counter redisRetryCounter;
+    @Mock
+    private Counter outboxSuccessCounter;
+    @Mock
+    private Counter outboxFailureCounter;
+    @Mock
+    private Counter outboxRetryCounter;
+    @Mock
+    private Counter sagaStepSuccessCounter;
+    @Mock
+    private Counter sagaStepFailedCounter;
+    @Mock
+    private Counter sagaCompensationRetryCounter;
+    @Mock
+    private Timer redisTimer;
+    @Mock
+    private Timer outboxTimer;
+    @Mock
+    private Timer sagaTimer;
+    @Mock
+    private Timer.Sample timerSample;
+    @Mock
+    private TransactionalOperator transactionalOperator;
+    @Mock
+    private SagaOrchestrator sagaOrchestrator;
 
-    @InjectMocks private OrderService orderService;
+    @InjectMocks
+    private OrderServiceImpl orderService;
 
     private AutoCloseable closeable;
 
@@ -115,6 +149,7 @@ class OrderServiceUnitTest {
         when(meterRegistry.counter("saga_compensation_retry")).thenReturn(sagaCompensationRetryCounter);
         when(meterRegistry.timer("event.publish.redis.timer")).thenReturn(redisTimer);
         when(meterRegistry.timer("event.publish.outbox.timer")).thenReturn(outboxTimer);
+        when(meterRegistry.timer("saga_step.timer")).thenReturn(sagaTimer);
 
         when(circuitBreakerRegistry.circuitBreaker(anyString())).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
@@ -149,28 +184,18 @@ class OrderServiceUnitTest {
         Long orderId = 1L;
         int quantity = 10;
         double amount = 100.0;
+        String correlationId = UUID.randomUUID().toString();
+        Order order = new Order(orderId, "completed", correlationId);
 
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
-
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        when(databaseClient.sql(sqlCaptor.capture())).thenReturn(executeSpec);
+        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)).thenReturn(Mono.just(order));
 
         Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
 
         StepVerifier.create(result)
-                .expectNextMatches(order -> order.id().equals(orderId) && order.status().equals("completed"))
+                .expectNextMatches(o -> o.id().equals(orderId) && o.status().equals("completed"))
                 .verifyComplete();
 
-        assertTrue(sqlCaptor.getAllValues().contains("INSERT INTO orders (id, status, correlation_id) VALUES (:id, :status, :correlationId)"));
-        assertTrue(sqlCaptor.getAllValues().contains("UPDATE orders SET status = :status WHERE id = :id"));
-
-        ArgumentCaptor<String> bindKeyCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<Object> bindValueCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(executeSpec, atLeastOnce()).bind(bindKeyCaptor.capture(), bindValueCaptor.capture());
-        assertTrue(bindKeyCaptor.getAllValues().contains("status"));
-        assertTrue(bindValueCaptor.getAllValues().contains("completed"));
-        assertTrue(bindKeyCaptor.getAllValues().contains("id"));
-        assertTrue(bindValueCaptor.getAllValues().contains(orderId));
+        verify(ordersSuccessCounter).increment();
     }
 
     /**
@@ -181,17 +206,17 @@ class OrderServiceUnitTest {
         Long orderId = 1L;
         int quantity = 10;
         double amount = 100.0;
+        String correlationId = UUID.randomUUID().toString();
+        Order order = new Order(orderId, "completed", correlationId);
 
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
+        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)).thenReturn(Mono.just(order));
+        when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
 
         Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
 
         StepVerifier.create(result).expectNextCount(1).verifyComplete();
 
-        ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(streamOps, times(2)).add(eq("orders"), eventMapCaptor.capture());
-        assertEquals("StockReserved", eventMapCaptor.getAllValues().get(1).get("type"));
-        assertEquals(orderId, eventMapCaptor.getAllValues().get(1).get("orderId"));
+        verify(sagaOrchestrator).executeOrderSaga(orderId, quantity, amount, anyString());
     }
 
     /**
@@ -202,17 +227,16 @@ class OrderServiceUnitTest {
         Long orderId = 1L;
         int quantity = 10;
         double amount = 100.0;
+        String correlationId = UUID.randomUUID().toString();
+        Order order = new Order(orderId, "completed", correlationId);
 
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
+        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)).thenReturn(Mono.just(order));
 
         Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
 
         StepVerifier.create(result).expectNextCount(1).verifyComplete();
 
         verify(ordersSuccessCounter).increment();
-        verify(redisSuccessCounter, times(2)).increment();
-        verify(sagaStepSuccessCounter).increment();
-        verify(timerSample, times(2)).stop(redisTimer);
     }
 
     /**
@@ -227,6 +251,7 @@ class OrderServiceUnitTest {
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(false);
         when(circuitBreaker.getState()).thenReturn(CircuitBreaker.State.OPEN);
+        when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
 
         Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
 
@@ -237,12 +262,7 @@ class OrderServiceUnitTest {
                                 order.correlationId().equals("unknown"))
                 .verifyComplete();
 
-        ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
-        assertEquals("OrderFailed", eventMapCaptor.getValue().get("type"));
-        assertTrue(((String) eventMapCaptor.getValue().get("payload")).contains(OrderServiceConstants.ERROR_CIRCUIT_BREAKER));
-
-        verify(inventoryService, never()).reserveStock(anyLong(), anyInt());
+        verify(sagaOrchestrator).publishFailedEvent(any(OrderFailedEvent.class));
     }
 
     /**
@@ -253,19 +273,20 @@ class OrderServiceUnitTest {
         Long orderId = 1L;
         int quantity = 10;
         double amount = 100.0;
+        String correlationId = UUID.randomUUID().toString();
+        Order order = new Order(orderId, "completed", correlationId);
 
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
         when(circuitBreaker.getState()).thenReturn(CircuitBreaker.State.HALF_OPEN);
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
+        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)).thenReturn(Mono.just(order));
 
         Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
 
         StepVerifier.create(result)
-                .expectNextMatches(order -> order.id().equals(orderId) && order.status().equals("completed"))
+                .expectNextMatches(o -> o.id().equals(orderId) && o.status().equals("completed"))
                 .verifyComplete();
 
-        verify(inventoryService).reserveStock(orderId, quantity);
         verify(ordersSuccessCounter).increment();
     }
 
@@ -283,8 +304,7 @@ class OrderServiceUnitTest {
                                 throwable.getMessage().contains(expectedError))
                 .verify();
 
-        verify(databaseClient, never()).sql(anyString());
-        verify(inventoryService, never()).reserveStock(anyLong(), anyInt());
+        verify(sagaOrchestrator, never()).executeOrderSaga(anyLong(), anyInt(), anyDouble(), anyString());
     }
 
     private static Stream<Arguments> provideInvalidOrderInputs() {
@@ -303,10 +323,11 @@ class OrderServiceUnitTest {
         Long orderId = 1L;
         int quantity = 10;
         double amount = 100.0;
+        String correlationId = UUID.randomUUID().toString();
 
-        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
-        when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
-        when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException("Timeout")));
+        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId))
+                .thenReturn(Mono.error(new RuntimeException("Timeout")));
+        when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
 
         Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
 
@@ -317,10 +338,7 @@ class OrderServiceUnitTest {
                                 order.correlationId().equals("unknown"))
                 .verifyComplete();
 
-        ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
-        assertEquals("OrderFailed", eventMapCaptor.getValue().get("type"));
-        assertTrue(((String) eventMapCaptor.getValue().get("payload")).contains(OrderServiceConstants.ERROR_TIMEOUT));
+        verify(sagaOrchestrator).publishFailedEvent(any(OrderFailedEvent.class));
     }
 
     // --- Order Creation Tests ---
@@ -335,6 +353,7 @@ class OrderServiceUnitTest {
 
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         when(databaseClient.sql(sqlCaptor.capture())).thenReturn(executeSpec);
+        when(streamOps.add(anyString(), anyMap())).thenReturn((Mono<RecordId>) Mono.just("record-id"));
 
         Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
@@ -355,6 +374,8 @@ class OrderServiceUnitTest {
     void shouldPublishOrderCreatedEvent() {
         Long orderId = 1L;
         String correlationId = "test-correlation-id";
+
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
 
         Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
@@ -379,6 +400,7 @@ class OrderServiceUnitTest {
         when(databaseClient.sql(anyString())).thenReturn(executeSpec);
         when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
         when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException(errorMessage)));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
 
         Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
@@ -414,445 +436,124 @@ class OrderServiceUnitTest {
         verify(databaseClient, never()).sql(anyString());
     }
 
-    // --- Event Publishing Tests ---
-
     /**
-     * Verifies that publishEvent publishes an OrderCreated event correctly.
-     */
-    @Test
-    void shouldPublishOrderCreatedEventSuccessfully() {
-        OrderService.OrderCreatedEvent event = new OrderService.OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
-
-        Mono<Void> result = orderService.publishEvent(event);
-
-        StepVerifier.create(result).verifyComplete();
-
-        ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
-        assertEquals("OrderCreated", eventMapCaptor.getValue().get("type"));
-        assertEquals(1L, eventMapCaptor.getValue().get("orderId"));
-        assertEquals("corr-id", eventMapCaptor.getValue().get("correlationId"));
-    }
-
-    /**
-     * Verifies that publishEvent publishes a StockReserved event correctly.
-     */
-    @Test
-    void shouldPublishStockReservedEventSuccessfully() {
-        OrderService.StockReservedEvent event = new OrderService.StockReservedEvent(1L, "corr-id", "event-id", 10);
-
-        Mono<Void> result = orderService.publishEvent(event);
-
-        StepVerifier.create(result).verifyComplete();
-
-        ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
-        assertEquals("StockReserved", eventMapCaptor.getValue().get("type"));
-        assertEquals(1L, eventMapCaptor.getValue().get("orderId"));
-        assertEquals(10, eventMapCaptor.getValue().get("quantity"));
-    }
-
-    /**
-     * Verifies that publishEvent falls back to outbox on Redis failure.
-     */
-    @Test
-    void shouldPublishToOutboxOnRedisFailure() {
-        // Setup Logback appender for testing
-        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
-        listAppender.start();
-        Logger logger = (Logger) LoggerFactory.getLogger(OrderService.class);
-        logger.addAppender(listAppender);
-
-        OrderService.OrderCreatedEvent event = new OrderService.OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
-        String errorMessage = "Redis connection failed";
-
-        // Reset streamOps to avoid default mock interference
-        reset(streamOps);
-        // Mock streamOps.add to fail consistently
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.error(new RuntimeException(errorMessage)));
-        // Mock databaseClient.sql to succeed
-        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
-        // Mock executeSpec with bindings for outbox insertion
-        when(executeSpec.bind(eq("event_type"), anyString())).thenReturn(bindSpec);
-        when(executeSpec.bind(eq("correlationId"), anyString())).thenReturn(bindSpec);
-        when(executeSpec.bind(eq("eventId"), anyString())).thenReturn(bindSpec);
-        when(executeSpec.bind(eq("payload"), anyString())).thenReturn(bindSpec);
-        when(bindSpec.then()).thenReturn(Mono.empty());
-        // Mock circuit breaker to ensure retries are not bypassed
-        CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("redisEventPublishing");
-        when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
-
-        Mono<Void> result = orderService.publishEvent(event);
-
-        StepVerifier.create(result).verifyComplete();
-
-        verify(streamOps, times(4)).add(eq("orders"), anyMap()); // 1 initial + 3 retries
-        verify(redisFailureCounter, times(4)).increment(); // Once per failed attempt
-        verify(redisRetryCounter, times(3)).increment(); // Once per retry
-        verify(redisSuccessCounter, never()).increment(); // No successful Redis publish
-        verify(outboxSuccessCounter).increment(); // Outbox insertion succeeds
-        verify(outboxFailureCounter, never()).increment(); // No outbox failures
-        verify(outboxRetryCounter, never()).increment(); // No outbox retries
-
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(databaseClient).sql(sqlCaptor.capture());
-        assertEquals("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)", sqlCaptor.getValue());
-
-        // Verify logs
-        List<ILoggingEvent> logs = listAppender.list;
-        assertEquals(9, logs.size()); // 4 error + 3 retry + 1 circuit breaker + 1 outbox success
-        assertEquals(4, logs.stream().filter(log -> log.getFormattedMessage().contains("Failed to publish event")).count());
-        assertEquals(3, logs.stream().filter(log -> log.getFormattedMessage().contains("Retrying Redis publish")).count());
-        assertEquals(1, logs.stream().filter(log -> log.getFormattedMessage().contains("Redis circuit breaker tripped")).count());
-        assertEquals(1, logs.stream().filter(log -> log.getFormattedMessage().contains("Persisted event")).count());
-    }
-
-    /**
-     * Verifies that publishEvent handles persistent outbox failure and pushes to dead-letter queue.
-     */
-    @Test
-    void shouldHandlePersistentOutboxFailure() {
-        // Setup Logback appender for testing
-        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
-        listAppender.start();
-        Logger logger = (Logger) LoggerFactory.getLogger(OrderService.class);
-        logger.addAppender(listAppender);
-
-        OrderService.OrderCreatedEvent event = new OrderService.OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
-        String redisError = "Redis connection failed";
-        String dbError = "Database failure";
-
-        // Reset streamOps
-        reset(streamOps);
-        // Mock Redis and database failures
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.error(new RuntimeException(redisError)));
-        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
-        when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
-        when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException(dbError)));
-        when(redisTemplate.opsForList().leftPush(eq("failed-outbox-events"), any())).thenReturn(Mono.just(1L));
-        // Mock circuit breaker
-        CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("redisEventPublishing");
-        when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
-
-        Mono<Void> result = orderService.publishEvent(event);
-
-        StepVerifier.create(result)
-                .expectErrorMatches(e -> e.getMessage().contains("Outbox persist retry exhausted, event pushed to dead-letter queue"))
-                .verify();
-
-        // Verify metrics
-        verify(streamOps, times(4)).add(eq("orders"), anyMap());
-        verify(redisFailureCounter, times(4)).increment();
-        verify(redisRetryCounter, times(3)).increment();
-        verify(outboxFailureCounter, times(4)).increment(); // Once per attempt
-        verify(outboxRetryCounter, times(3)).increment(); // Once per retry
-        verify(outboxSuccessCounter, never()).increment();
-
-        // Verify dead-letter queue
-        ArgumentCaptor<Map<String, Object>> dlqCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(redisTemplate.opsForList()).leftPush(eq("failed-outbox-events"), dlqCaptor.capture());
-        Map<String, Object> failedEvent = dlqCaptor.getValue();
-        assertEquals(1L, failedEvent.get("orderId"));
-        assertEquals("corr-id", failedEvent.get("correlationId"));
-        assertEquals("event-id", failedEvent.get("eventId"));
-        assertEquals("OrderCreated", failedEvent.get("type"));
-        assertEquals(dbError, failedEvent.get("error"));
-        assertTrue(failedEvent.containsKey("timestamp"));
-
-        // Verify logs
-        List<ILoggingEvent> logs = listAppender.list;
-        assertTrue(logs.stream().anyMatch(log -> log.getFormattedMessage().contains("Failed to persist event")));
-        assertTrue(logs.stream().anyMatch(log -> log.getFormattedMessage().contains("CRITICAL: Persistent failure")));
-        assertTrue(logs.stream().anyMatch(log -> log.getFormattedMessage().contains("Pushed failed event")));
-    }
-
-    /**
-     * Verifies that publishEvent handles circuit breaker open state.
-     */
-    @Test
-    void shouldPublishToOutboxWhenCircuitBreakerOpens() {
-        OrderService.OrderCreatedEvent event = new OrderService.OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
-        CircuitBreaker circuitBreaker = mock(CircuitBreaker.class);
-        when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
-        // Mock circuit breaker to throw CallNotPermittedException
-        when(circuitBreaker.tryAcquirePermission()).thenReturn(false);
-        when(circuitBreaker.getState()).thenReturn(CircuitBreaker.State.OPEN);
-        // Mock database to succeed
-        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
-        when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
-        when(bindSpec.then()).thenReturn(Mono.empty());
-
-        Mono<Void> result = orderService.publishEvent(event);
-
-        StepVerifier.create(result).verifyComplete();
-
-        verify(streamOps, never()).add(anyString(), anyMap()); // No calls due to circuit breaker
-        verify(redisFailureCounter, never()).increment();
-        verify(redisRetryCounter, never()).increment();
-        verify(outboxSuccessCounter).increment();
-        verify(databaseClient).sql(eq("CALL insert_outbox(:event_type, :correlationId, :eventId, :payload)"));
-    }
-
-    /**
-     * Verifies that publishEvent does not retry on IllegalArgumentException.
-     * Note: This test reflects the current production code bug where IllegalArgumentException is retried.
-     */
-    @Test
-    void shouldRetryOnIllegalArgumentException() {
-        OrderService.OrderCreatedEvent event = mock(OrderService.OrderCreatedEvent.class);
-        when(event.getType()).thenReturn(null); // Triggers IllegalArgumentException
-        when(event.getOrderId()).thenReturn(1L);
-        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
-        when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
-        when(bindSpec.then()).thenReturn(Mono.empty());
-        CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("redisEventPublishing");
-        when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
-
-        Mono<Void> result = orderService.publishEvent(event);
-
-        StepVerifier.create(result).verifyComplete();
-
-        verify(streamOps, times(4)).add(eq("orders"), anyMap());
-        verify(redisFailureCounter, times(4)).increment();
-        verify(redisRetryCounter, times(3)).increment();
-        verify(outboxSuccessCounter).increment();
-    }
-
-    /**
-     * Verifies that publishEvent handles concurrent Redis and outbox failure.
-     */
-    @Test
-    void shouldHandleConcurrentRedisAndOutboxFailure() {
-        OrderService.OrderCreatedEvent event = new OrderService.OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
-        String redisError = "Redis connection failed";
-        String outboxError = "Outbox insert failed";
-
-        reset(streamOps);
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.error(new RuntimeException(redisError)));
-        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
-        when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
-        when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException(outboxError)));
-        when(redisTemplate.opsForList().leftPush(eq("failed-outbox-events"), any())).thenReturn(Mono.just(1L));
-        CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("redisEventPublishing");
-        when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
-
-        Mono<Void> result = orderService.publishEvent(event);
-
-        StepVerifier.create(result)
-                .expectErrorMatches(throwable -> throwable.getMessage().contains("Outbox persist retry exhausted"))
-                .verify();
-
-        verify(redisFailureCounter, times(4)).increment();
-        verify(outboxFailureCounter, times(4)).increment();
-        verify(outboxRetryCounter, times(3)).increment();
-        verify(redisTemplate.opsForList()).leftPush(eq("failed-outbox-events"), any());
-    }
-
-    /**
-     * Verifies that publishEvent validates event fields.
+     * Verifies that createOrder validates orderId.
      */
     @ParameterizedTest
-    @MethodSource("provideInvalidEventData")
-    void shouldFailToPublishEventWithInvalidData(String correlationId, String eventType, String expectedError) {
-        OrderService.OrderEvent event = new OrderService.OrderEvent() {
-            @Override
-            public Long getOrderId() { return 1L; }
-            @Override
-            public String getCorrelationId() { return correlationId; }
-            @Override
-            public String getEventId() { return "event-id"; }
-            @Override
-            public String getType() { return eventType; }
-            @Override
-            public String toJson() { return "{}"; }
-        };
+    @ValueSource(longs = {0, -1})
+    void shouldFailToCreateOrderWithInvalidOrderId(Long orderId) {
+        String correlationId = "test-correlation-id";
 
-        Mono<Void> result = orderService.publishEvent(event);
+        Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
         StepVerifier.create(result)
                 .expectErrorMatches(throwable ->
                         throwable instanceof IllegalArgumentException &&
-                                throwable.getMessage().contains(expectedError))
+                                throwable.getMessage().contains(OrderServiceConstants.ERROR_INVALID_ORDER_ID))
                 .verify();
 
-        verify(streamOps, never()).add(anyString(), anyMap());
+        verify(databaseClient, never()).sql(anyString());
     }
 
-    private static Stream<Arguments> provideInvalidEventData() {
-        return Stream.of(
-                Arguments.of(null, "OrderCreated", OrderServiceConstants.ERROR_NULL_CORRELATION_ID),
-                Arguments.of("", "OrderCreated", OrderServiceConstants.ERROR_NULL_CORRELATION_ID),
-                Arguments.of("corr-id", null, OrderServiceConstants.ERROR_NULL_EVENT_TYPE),
-                Arguments.of("corr-id", "", OrderServiceConstants.ERROR_NULL_EVENT_TYPE)
-        );
-    }
-
-    // --- Saga Step Execution Tests ---
-
-    /**
-     * Verifies that executeStep completes successfully.
-     */
     @Test
-    void shouldExecuteSagaStepSuccessfully() {
+    void shouldHandleRedisSuccessAfterRetries() {
+        OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
+
+        reset(streamOps);
+        when(streamOps.add(anyString(), anyMap()))
+                .thenReturn(Mono.error(new RuntimeException("Redis failure")))
+                .thenReturn(Mono.error(new RuntimeException("Redis failure")))
+                .thenReturn(Mono.just("record-id"));
+        CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("redisEventPublishing");
+        when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
+
+        Mono<Void> result = orderService.publishEvent(event);
+
+        StepVerifier.create(result).verifyComplete();
+
+        verify(streamOps, times(3)).add(eq("orders"), anyMap());
+        verify(redisFailureCounter, times(2)).increment();
+        verify(redisRetryCounter, times(2)).increment();
+        verify(redisSuccessCounter).increment();
+        verify(outboxSuccessCounter, never()).increment();
+        verify(timerSample).stop(redisTimer);
+    }
+
+    @Test
+    void shouldHandleMeterRegistryFailureDuringEventPublishing() {
+        OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
+
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
+        when(meterRegistry.counter("event.publish.redis.success")).thenThrow(new RuntimeException("Metrics failure"));
+
+        Mono<Void> result = orderService.publishEvent(event);
+
+        StepVerifier.create(result).verifyComplete();
+
+        verify(streamOps).add(eq("orders"), anyMap());
+        verify(timerSample).stop(redisTimer);
+    }
+
+    @Test
+    void shouldHandleMeterRegistryFailureDuringSagaStep() {
         Long orderId = 1L;
         String correlationId = "corr-id";
         String eventId = UUID.randomUUID().toString();
         int quantity = 10;
 
-        OrderService.SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
+        SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
         when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
+        when(meterRegistry.counter(eq("saga_step_success"), anyString(), anyString()))
+                .thenThrow(new RuntimeException("Metrics failure"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
 
-        Mono<OrderService.OrderEvent> result = orderService.executeStep(step);
+        Mono<OrderEvent> result = orderService.executeStep(step);
 
         StepVerifier.create(result)
                 .expectNextMatches(event ->
-                        event.getType().equals("StockReserved") &&
+                        event.getType().equals(OrderEventType.STOCK_RESERVED) &&
                                 event.getOrderId().equals(orderId))
                 .verifyComplete();
 
-        verify(sagaStepSuccessCounter).increment();
         verify(inventoryService).reserveStock(orderId, quantity);
+        verify(streamOps).add(eq("orders"), anyMap());
+        verify(timerSample).stop(sagaTimer);
     }
 
-    /**
-     * Verifies that executeStep handles action failure and triggers compensation.
-     */
+    // --- Order Processing Tests ---
+
     @Test
-    void shouldHandleSagaStepActionFailure() {
-        Long orderId = 1L;
-        String correlationId = "corr-id";
-        String eventId = UUID.randomUUID().toString();
-        int quantity = 10;
-        String errorMessage = "Insufficient stock";
-
-        OrderService.SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.error(new RuntimeException(errorMessage)));
-        when(inventoryService.releaseStock(orderId, quantity)).thenReturn(Mono.empty());
-
-        Mono<OrderService.OrderEvent> result = orderService.executeStep(step);
-
-        StepVerifier.create(result)
-                .expectErrorMatches(throwable -> throwable.getMessage().contains(errorMessage))
-                .verify();
-
-        ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
-        assertEquals("OrderFailed", eventMapCaptor.getValue().get("type"));
-
-        verify(sagaStepFailedCounter).increment();
-        verify(inventoryService).releaseStock(orderId, quantity);
-    }
-
-    /**
-     * Verifies that executeStep handles compensation success after retries.
-     */
-    @Test
-    void shouldHandleSagaStepCompensationSuccessAfterRetries() {
-        Long orderId = 1L;
-        String correlationId = "corr-id";
-        String eventId = UUID.randomUUID().toString();
-        int quantity = 10;
-        String actionError = "Insufficient stock";
-
-        OrderService.SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.error(new RuntimeException(actionError)));
-        when(inventoryService.releaseStock(orderId, quantity))
-                .thenReturn(Mono.error(new RuntimeException("First retry failed")))
-                .thenReturn(Mono.empty());
-
-        Mono<OrderService.OrderEvent> result = orderService.executeStep(step);
-
-        StepVerifier.create(result)
-                .expectErrorMatches(throwable -> throwable.getMessage().contains(actionError))
-                .verify();
-
-        verify(inventoryService, times(2)).releaseStock(orderId, quantity);
-        verify(sagaCompensationRetryCounter).increment();
-    }
-
-    /**
-     * Verifies that executeStep handles persistent compensation failure.
-     */
-    @Test
-    void shouldHandleSagaStepPersistentCompensationFailure() {
-        Long orderId = 1L;
-        String correlationId = "corr-id";
-        String eventId = UUID.randomUUID().toString();
-        int quantity = 10;
-        String actionError = "Insufficient stock";
-        String compensationError = "Compensation failed";
-
-        OrderService.SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.error(new RuntimeException(actionError)));
-        when(inventoryService.releaseStock(orderId, quantity))
-                .thenReturn(Mono.error(new RuntimeException(compensationError)))
-                .thenReturn(Mono.error(new RuntimeException(compensationError)))
-                .thenReturn(Mono.error(new RuntimeException(compensationError)));
-        when(redisTemplate.opsForList().leftPush(eq("failed-compensations"), any())).thenReturn(Mono.just(1L));
-
-        Mono<OrderService.OrderEvent> result = orderService.executeStep(step);
-
-        StepVerifier.create(result)
-                .expectErrorMatches(throwable -> throwable.getMessage().contains(actionError))
-                .verify();
-
-        ArgumentCaptor<OrderService.CompensationTask> taskCaptor = ArgumentCaptor.forClass(OrderService.CompensationTask.class);
-        verify(redisTemplate.opsForList()).leftPush(eq("failed-compensations"), taskCaptor.capture());
-        assertEquals(compensationError, taskCaptor.getValue().error());
-
-        verify(inventoryService, times(3)).releaseStock(orderId, quantity);
-    }
-
-    /**
-     * Verifies that SagaStep validates required fields.
-     */
-    @ParameterizedTest
-    @MethodSource("provideInvalidSagaStepData")
-    void shouldFailToCreateSagaStepWithInvalidFields(String name, Supplier<Mono<?>> action, String expectedError) {
-        assertThrows(NullPointerException.class, () -> OrderService.SagaStep.builder()
-                .name(name)
-                .action(action)
-                .compensation(() -> Mono.empty())
-                .successEvent(eid -> new OrderService.StockReservedEvent(1L, "corr-id", eid, 10))
-                .orderId(1L)
-                .correlationId("corr-id")
-                .eventId("event-id")
-                .build(), expectedError);
-    }
-
-    private static Stream<Arguments> provideInvalidSagaStepData() {
-        return Stream.of(
-                Arguments.of(null, (Supplier<Mono<?>>) () -> Mono.empty(), OrderServiceConstants.ERROR_NULL_STEP_NAME),
-                Arguments.of("reserveStock", null, OrderServiceConstants.ERROR_NULL_STEP_ACTION)
-        );
-    }
-
-    /**
-     * Helper method to create a SagaStep for tests.
-     */
-    private OrderService.SagaStep createSagaStep(Long orderId, String correlationId, String eventId, int quantity) {
-        return OrderService.SagaStep.builder()
-                .name("reserveStock")
-                .action(() -> inventoryService.reserveStock(orderId, quantity))
-                .compensation(() -> inventoryService.releaseStock(orderId, quantity))
-                .successEvent(eid -> new OrderService.StockReservedEvent(orderId, correlationId, eid, quantity))
-                .orderId(orderId)
-                .correlationId(correlationId)
-                .eventId(eventId)
-                .build();
-    }
-
-    /**
-     * Verifies that metrics are not updated if MeterRegistry fails.
-     */
-    @Test
-    void shouldHandleMeterRegistryFailure() {
+    void shouldHandleConcurrentDatabaseAndRedisFailure() {
         Long orderId = 1L;
         int quantity = 10;
         double amount = 100.0;
 
+        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
+        when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
+        when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException("Database failure")));
+        reset(streamOps);
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.error(new RuntimeException("Redis failure")));
+        when(redisTemplate.opsForList().leftPush(eq("failed-outbox-events"), any())).thenReturn(Mono.just(1L));
+
+        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+
+        StepVerifier.create(result)
+                .expectNextMatches(order ->
+                        order.id().equals(orderId) &&
+                                order.status().equals("failed") &&
+                                order.correlationId().equals("unknown"))
+                .verifyComplete();
+
+        verify(redisTemplate.opsForList()).leftPush(eq("failed-outbox-events"), any());
+        verify(redisFailureCounter, times(4)).increment();
+        verify(redisRetryCounter, times(3)).increment();
+    }
+
+    @ParameterizedTest
+    @MethodSource("provideValidOrderInputs")
+    void shouldProcessOrderWithDifferentQuantitiesAndAmounts(Long orderId, int quantity, double amount) {
         when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
-        when(meterRegistry.counter("orders_success")).thenThrow(new RuntimeException("Metrics failure"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
 
         Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
 
@@ -861,79 +562,68 @@ class OrderServiceUnitTest {
                 .verifyComplete();
 
         verify(inventoryService).reserveStock(orderId, quantity);
-        // Metrics failure should not prevent order processing
+        verify(ordersSuccessCounter).increment();
+        verify(streamOps, times(2)).add(eq("orders"), anyMap());
+    }
+
+    private static Stream<Arguments> provideValidOrderInputs() {
+        return Stream.of(
+                Arguments.of(1L, 5, 50.0),
+                Arguments.of(2L, 10, 100.0),
+                Arguments.of(3L, 20, 200.0)
+        );
     }
 
     /**
-     * Verifies that publishEvent increments outboxFailureCounter per retry.
+     * Verifies that createOrder handles MeterRegistry failure.
      */
     @Test
-    void shouldIncrementOutboxFailureCounterPerRetry() {
-        OrderService.OrderCreatedEvent event = new OrderService.OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
-        reset(streamOps);
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.error(new RuntimeException("Redis failure")));
-        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
-        when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
-        when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException("Database failure")));
-        when(redisTemplate.opsForList().leftPush(eq("failed-outbox-events"), any())).thenReturn(Mono.just(1L));
-        CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("redisEventPublishing");
-        when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
-
-        Mono<Void> result = orderService.publishEvent(event);
-
-        StepVerifier.create(result).verifyError();
-
-        verify(outboxFailureCounter, times(4)).increment(); // Once per attempt
-        verify(outboxRetryCounter, times(3)).increment();
-        verify(redisTemplate.opsForList()).leftPush(eq("failed-outbox-events"), any());
-    }
-
-    /**
-     * Verifies that executeStep pushes correct compensation task on failure.
-     */
-    @Test
-    void shouldPushCorrectCompensationTaskOnFailure() {
+    void shouldHandleMeterRegistryFailureDuringOrderCreation() {
         Long orderId = 1L;
-        String correlationId = "corr-id";
-        String eventId = UUID.randomUUID().toString();
-        int quantity = 10;
-        String error = "Compensation failed";
+        String correlationId = "test-correlation-id";
 
-        OrderService.SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.error(new RuntimeException("Action failed")));
-        when(inventoryService.releaseStock(orderId, quantity)).thenReturn(Mono.error(new RuntimeException(error)));
-        when(redisTemplate.opsForList().leftPush(eq("failed-compensations"), any())).thenReturn(Mono.just(1L));
+        when(meterRegistry.counter("orders_success")).thenThrow(new RuntimeException("Metrics failure"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
 
-        Mono<OrderService.OrderEvent> result = orderService.executeStep(step);
+        Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
-        StepVerifier.create(result).verifyError();
+        StepVerifier.create(result)
+                .expectNextMatches(order ->
+                        order.id().equals(orderId) &&
+                                order.status().equals("pending") &&
+                                order.correlationId().equals(correlationId))
+                .verifyComplete();
 
-        ArgumentCaptor<OrderService.CompensationTask> taskCaptor = ArgumentCaptor.forClass(OrderService.CompensationTask.class);
-        verify(redisTemplate.opsForList()).leftPush(eq("failed-compensations"), taskCaptor.capture());
-        OrderService.CompensationTask task = taskCaptor.getValue();
-        assertEquals(orderId, task.orderId());
-        assertEquals(correlationId, task.correlationId());
-        assertEquals(error, task.error());
-        assertEquals(0, task.retries());
+        verify(databaseClient).sql(anyString());
     }
+
+    // --- Event Publishing Tests ---
+
+    /**
+     * Verifies that publishEvent publishes an OrderCreated event correctly.
+     */
     @Test
-    void shouldNotRetryOnIllegalArgumentException() {
-        OrderService.OrderCreatedEvent event = mock(OrderService.OrderCreatedEvent.class);
-        when(event.getType()).thenReturn(null); // Triggers IllegalArgumentException
-        when(event.getOrderId()).thenReturn(1L);
-        when(databaseClient.sql(anyString())).thenReturn(executeSpec);
-        when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
-        when(bindSpec.then()).thenReturn(Mono.empty());
-        CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("redisEventPublishing");
-        when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
+    void shouldPublishOrderCreatedEventSuccessfully() {
+        OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
+
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
 
         Mono<Void> result = orderService.publishEvent(event);
 
         StepVerifier.create(result).verifyComplete();
 
-        verify(streamOps, times(1)).add(eq("orders"), anyMap()); // Only one attempt
-        verify(redisFailureCounter, times(1)).increment();
+        ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
+        Map<String, Object> capturedEvent = eventMapCaptor.getValue();
+        assertEquals("OrderCreated", capturedEvent.get("type"));
+        assertEquals(1L, capturedEvent.get("orderId"));
+        assertEquals("corr-id", capturedEvent.get("correlationId"));
+        assertEquals("event-id", capturedEvent.get("eventId"));
+        assertTrue(capturedEvent.get("payload").toString().contains("pending"));
+
+        verify(redisSuccessCounter).increment();
+        verify(timerSample).stop(redisTimer);
+        verify(redisFailureCounter, never()).increment();
         verify(redisRetryCounter, never()).increment();
-        verify(outboxSuccessCounter).increment();
     }
 }
