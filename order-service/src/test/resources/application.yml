@@ -1,6 +1,8 @@
 spring:
   profiles:
     active: test
+  main:
+    allow-bean-definition-overriding: true
   r2dbc:
     url: ${SPRING_R2DBC_URL:r2dbc:mysql://localhost:3306/orders}
     username: ${SPRING_R2DBC_USERNAME:root}

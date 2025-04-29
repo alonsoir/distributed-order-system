@@ -44,7 +44,8 @@ public class CompensationManager {
                     log.error("Compensation {} failed for order {}: {}", step.getName(), step.getOrderId(), compE.getMessage());
                     return redisTemplate.opsForList()
                             .leftPush("failed-compensations",
-                                    new CompensationTask(step.getOrderId(), step.getCorrelationId(), step.getName(), step.getName(), compE.getMessage(), 0))
+                                    // public record CompensationTask(Long orderId, String correlationId, String errorMessage, int retries) {}
+                                    new CompensationTask(step.getOrderId(), step.getCorrelationId(), compE.getMessage(), 0))
                             .then(Mono.error(compE));
                 })
                 .doFinally(signalType -> MDC.clear());

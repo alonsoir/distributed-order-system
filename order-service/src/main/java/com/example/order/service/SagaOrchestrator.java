@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
@@ -24,6 +25,7 @@ public class SagaOrchestrator {
 
     private final DatabaseClient databaseClient;
     private final InventoryService inventoryService;
+    @Qualifier("orderEventPublisher") // Especifica el bean correcto
     private final EventPublisher eventPublisher;
     private final CompensationManager compensationManager;
     private final TransactionalOperator transactionalOperator;
@@ -114,7 +116,7 @@ public class SagaOrchestrator {
                 });
     }
 
-    Mono<Void> publishFailedEvent(OrderFailedEvent event) {
+    public Mono<Void> publishFailedEvent(OrderFailedEvent event) {
         return eventPublisher.publishEvent(event, "failedEvent").then();
     }
 }

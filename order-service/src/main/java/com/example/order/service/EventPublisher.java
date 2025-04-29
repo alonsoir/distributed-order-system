@@ -21,7 +21,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
-@Component
+@Component("orderEventPublisher")// Nombre único, en principio, creo que solo necesito esta implementacion.
 @RequiredArgsConstructor
 public class EventPublisher {
     private static final Logger log = LoggerFactory.getLogger(EventPublisher.class);

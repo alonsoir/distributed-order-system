@@ -1,8 +1,5 @@
 package com.example.order.service;
 
-import ch.qos.logback.classic.Logger;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import com.example.order.domain.Order;
 import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
@@ -10,7 +7,6 @@ import com.example.order.events.OrderEventType;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.events.StockReservedEvent;
 import com.example.order.model.SagaStep;
-import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.Counter;
@@ -29,7 +25,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.data.redis.core.ReactiveStreamOperations;
@@ -39,10 +34,8 @@ import reactor.core.publisher.Hooks;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -131,6 +124,7 @@ class OrderServiceUnitTest {
     /**
      * Sets up mocks and common configurations before each test.
      */
+    @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
         Hooks.onOperatorDebug();
@@ -175,6 +169,28 @@ class OrderServiceUnitTest {
     }
 
     // --- Order Processing Tests ---
+
+    @Test
+    void shouldExecuteCompensationOnStepFailure() {
+        Long orderId = 1L;
+        String correlationId = "corr-id";
+        String eventId = UUID.randomUUID().toString();
+        int quantity = 10;
+
+        SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
+        when(inventoryService.reserveStock(orderId, quantity))
+                .thenReturn(Mono.error(new RuntimeException("Stock reservation failed")));
+        when(inventoryService.releaseStock(orderId, quantity)).thenReturn(Mono.empty());
+
+        Mono<OrderEvent> result = orderService.executeStep(step);
+
+        StepVerifier.create(result)
+                .expectErrorMatches(throwable -> throwable.getMessage().contains("Stock reservation failed"))
+                .verify();
+
+        verify(inventoryService).reserveStock(orderId, quantity);
+        verify(inventoryService).releaseStock(orderId, quantity); // Verify compensation
+    }
 
     /**
      * Verifies that processOrder persists the order correctly in the database.
@@ -353,7 +369,7 @@ class OrderServiceUnitTest {
 
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         when(databaseClient.sql(sqlCaptor.capture())).thenReturn(executeSpec);
-        when(streamOps.add(anyString(), anyMap())).thenReturn((Mono<RecordId>) Mono.just("record-id"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn((Mono<RecordId>) Mono.just(RecordId.of("record-id")));
 
         Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
@@ -375,12 +391,12 @@ class OrderServiceUnitTest {
         Long orderId = 1L;
         String correlationId = "test-correlation-id";
 
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
         Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
         StepVerifier.create(result).expectNextCount(1).verifyComplete();
-
+        @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
         verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
         assertEquals("OrderCreated", eventMapCaptor.getValue().get("type"));
@@ -400,7 +416,7 @@ class OrderServiceUnitTest {
         when(databaseClient.sql(anyString())).thenReturn(executeSpec);
         when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
         when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException(errorMessage)));
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
         Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
@@ -455,6 +471,7 @@ class OrderServiceUnitTest {
         verify(databaseClient, never()).sql(anyString());
     }
 
+    @SuppressWarnings("unchecked")
     @Test
     void shouldHandleRedisSuccessAfterRetries() {
         OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
@@ -463,7 +480,7 @@ class OrderServiceUnitTest {
         when(streamOps.add(anyString(), anyMap()))
                 .thenReturn(Mono.error(new RuntimeException("Redis failure")))
                 .thenReturn(Mono.error(new RuntimeException("Redis failure")))
-                .thenReturn(Mono.just("record-id"));
+                .thenReturn(Mono.just(RecordId.of("record-id")));
         CircuitBreaker circuitBreaker = CircuitBreaker.ofDefaults("redisEventPublishing");
         when(circuitBreakerRegistry.circuitBreaker("redisEventPublishing")).thenReturn(circuitBreaker);
 
@@ -483,7 +500,7 @@ class OrderServiceUnitTest {
     void shouldHandleMeterRegistryFailureDuringEventPublishing() {
         OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
 
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
         when(meterRegistry.counter("event.publish.redis.success")).thenThrow(new RuntimeException("Metrics failure"));
 
         Mono<Void> result = orderService.publishEvent(event);
@@ -505,7 +522,7 @@ class OrderServiceUnitTest {
         when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
         when(meterRegistry.counter(eq("saga_step_success"), anyString(), anyString()))
                 .thenThrow(new RuntimeException("Metrics failure"));
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
         Mono<OrderEvent> result = orderService.executeStep(step);
 
@@ -520,7 +537,17 @@ class OrderServiceUnitTest {
         verify(timerSample).stop(sagaTimer);
     }
 
-    // --- Order Processing Tests ---
+    private SagaStep createSagaStep(Long orderId, String correlationId, String eventId, int quantity) {
+        return new SagaStep(
+                "reserveStock",
+                () -> inventoryService.reserveStock(orderId, quantity),
+                payload -> new StockReservedEvent(orderId, correlationId, eventId, quantity),
+                () -> Mono.empty(),
+                orderId,
+                correlationId,
+                eventId
+        );
+    }
 
     @Test
     void shouldHandleConcurrentDatabaseAndRedisFailure() {
@@ -553,7 +580,7 @@ class OrderServiceUnitTest {
     @MethodSource("provideValidOrderInputs")
     void shouldProcessOrderWithDifferentQuantitiesAndAmounts(Long orderId, int quantity, double amount) {
         when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
         Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
 
@@ -583,7 +610,7 @@ class OrderServiceUnitTest {
         String correlationId = "test-correlation-id";
 
         when(meterRegistry.counter("orders_success")).thenThrow(new RuntimeException("Metrics failure"));
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
         Mono<Order> result = orderService.createOrder(orderId, correlationId);
 
@@ -606,7 +633,7 @@ class OrderServiceUnitTest {
     void shouldPublishOrderCreatedEventSuccessfully() {
         OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
 
-        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just("record-id"));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
         Mono<Void> result = orderService.publishEvent(event);
 

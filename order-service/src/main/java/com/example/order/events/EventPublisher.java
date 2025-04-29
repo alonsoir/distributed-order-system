@@ -6,7 +6,8 @@ import reactor.core.publisher.Mono;
 
 import static com.example.order.config.RedisConfig.EVENT_TOPIC;
 
-@Component
+
+@Component("genericEventPublisher") // Nombre único, todo sospechosa para desaparecer tras refactorizaciones
 public class EventPublisher {
 
     private final ReactiveRedisTemplate<String, Object> redisTemplate;
