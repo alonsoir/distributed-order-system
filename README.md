@@ -42,19 +42,33 @@ This project is a reference implementation for distributed systems, showcasing b
     - Failure scenarios (e.g., circuit breaker open, Redis failure, compensation failures).
     - Input validations (e.g., invalid order IDs, null event types).
     - Ongoing: Adding more validation tests and edge cases.
-- **Code Corrections**: Recent fixes addressed compilation issues in `OrderEvent` records and `SagaStep` constructor.
-- **Next Steps**:
-    1. Validate unit tests to ensure all are passing.
-    2. Add more unit tests for edge cases and validations.
-    3. Refactor `OrderService` to adhere to SRP, introducing:
-        - `AbstractOrderSaga` for saga orchestration.
-        - `EventPublisher` for event publishing.
-        - `OrderRepository` for database operations.
-    4. Implement integration tests with Testcontainers.
-    5. Develop end-to-end tests for real-world failure scenarios.
-    6. Introduce stored procedures for database operations as the final step.
-    7. Tag the polished version as `0.0.1-RELEASE`.
-
+      - **Code Corrections**: Recent fixes addressed compilation issues in `OrderEvent` records and `SagaStep` constructor.
+        - **Next Steps**:
+            1. Validate unit tests to ensure all are passing.
+            2. Add more unit tests for edge cases and validations.
+            3. Refactor `OrderService` to adhere to SRP, introducing:
+                - `AbstractOrderSaga` for saga orchestration.
+                - `EventPublisher` for event publishing.
+                - `OrderRepository` for database operations.
+            4. Implement integration tests with Testcontainers.
+            5. Develop end-to-end tests for real-world failure scenarios.
+            6. Introduce stored procedures for database operations as the final step.
+            7. Tag the polished version as `0.0.1-RELEASE`.
+      
+    - ## Testing status
+  
+        BaseIntegrationTest.java is abstract, candidate to eliminate.
+        SimpleTest.java is GREEN.
+        SimpleTestcontainersTest.java is GREEN.
+        CircuitBreakerUnitTest.java is GREEN. shouldReturnFailedOrderWhenSagaFails is disabled.
+        InventoryServiceUnitTest is GREEN.        
+        RedisUnitTest is GREEN.
+          
+        OrderServiceIntegrationTest is RED.
+        OrderServiceUnitTest is RED.
+        DatabaseClientIntegrationTest.java is RED.
+    
+- **Future Improvements**:
 ### How to Run
 #### Prerequisites
 - Java 17+
