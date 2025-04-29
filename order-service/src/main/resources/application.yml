@@ -5,11 +5,11 @@ spring:
     password: ${SPRING_R2DBC_PASSWORD:root}
   data:
     redis:
-      host: ${SPRING_DATA_REDIS_HOST:localhost}
-      port: ${SPRING_DATA_REDIS_PORT:6379}
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
   sql:
     init:
-      mode: ${SPRING_SQL_INIT_MODE:never}  # Desactiva inicialización por defecto
+      mode: ${SPRING_SQL_INIT_MODE:never}
 management:
   endpoints:
     web:

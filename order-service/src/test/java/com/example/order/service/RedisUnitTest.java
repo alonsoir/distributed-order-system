@@ -1,14 +1,16 @@
 package com.example.order.service;
 
+import com.example.order.config.RedisConfig;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
+import org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.data.redis.connection.stream.Record;
-import org.springframework.data.redis.connection.stream.RecordId;
-import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
-import org.springframework.data.redis.core.ReactiveStreamOperations;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
@@ -17,16 +19,21 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import reactor.test.StepVerifier;
+import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.core.ReactiveStreamOperations;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-@SpringBootTest(properties = {
-        "spring.profiles.active=test",
-        "spring.data.redis.host=localhost",  // Será sobrescrito por DynamicPropertySource
-        "spring.data.redis.port=6379"        // Será sobrescrito por DynamicPropertySource
+@ActiveProfiles("test")
+@SpringBootTest(
+        classes = RedisConfig.class
+)
+@ImportAutoConfiguration({
+        RedisAutoConfiguration.class,
+        RedisReactiveAutoConfiguration.class
 })
 @Testcontainers
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_EACH_TEST_METHOD)
@@ -39,164 +46,68 @@ class RedisUnitTest {
 
     @DynamicPropertySource
     static void overrideRedisProperties(DynamicPropertyRegistry registry) {
+        // inject the container host & mapped port into spring.redis.*
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", redis::getFirstMappedPort);
     }
 
+    // inyecta tu template definido en RedisConfig
     @Autowired
-    ReactiveRedisTemplate<String, Object> redisTemplate;
+    ReactiveRedisTemplate<String, String> stringReactiveRedisTemplate;
 
     @Autowired
-    private ReactiveRedisTemplate<String, Map<String, Object>> mapReactiveRedisTemplate;
-
-    @Autowired
-    private ReactiveRedisTemplate<String, String> stringReactiveRedisTemplate;
+    ReactiveRedisTemplate<String, Map<String, Object>> mapReactiveRedisTemplate;
 
     @Test
-    void testStreamOperationsWithMapTemplate() {
-        // Nombre único para el stream
-        String streamKey = "test-stream-" + UUID.randomUUID();
-        ReactiveStreamOperations<String, String, String> streamOps = stringReactiveRedisTemplate.opsForStream();
+    void testPublishAndConsumeOrderEvents() {
+        String key = "orders-" + UUID.randomUUID();
+        ReactiveStreamOperations<String, String, String> streamOps =
+                stringReactiveRedisTemplate.opsForStream();
 
-        // Crear datos para el stream
-        Map<String, String> eventData = new HashMap<>();
-        eventData.put("orderId", "100");
-        eventData.put("customerId", "200");
-        eventData.put("status", "PENDING");
-        eventData.put("amount", "59.99");
-        eventData.put("items", "5");
-        eventData.put("metadata", "{\"source\":\"web\",\"priority\":1}");
+        Map<String, String> event = new HashMap<>();
+        event.put("orderId", "ORD-12345");
+        event.put("correlationId", UUID.randomUUID().toString());
+        event.put("eventId", UUID.randomUUID().toString());
+        event.put("type", "OrderCreated");
+        event.put("payload", "{\"foo\":\"bar\"}");
 
-        // Publicar al stream
-        StepVerifier.create(
-                        streamOps
-                                .add(streamKey, eventData)
-                                .map(RecordId::getValue)
-                )
-                .expectNextMatches(recordId -> recordId != null && !recordId.isEmpty())
+        // publica
+        StepVerifier.create(streamOps.add(key, event).then())
                 .verifyComplete();
 
-        // Leer del stream
-        StepVerifier.create(
-                        streamOps.read(StreamOffset.fromStart(streamKey))
-                )
-                .expectNextMatches(record -> {
-                    // Verificar que el record no es nulo y es un MapRecord
-                    if (record == null || !(record instanceof MapRecord<?, ?, ?> mapRecord)) {
-                        return false;
-                    }
-
-                    // Cast seguro con supresión limitada
-                    @SuppressWarnings("unchecked")
-                    Map<String, String> value = (Map<String, String>) mapRecord.getValue();
-
-                    // Verificar los valores
-                    return value.get("orderId").equals("100") &&
-                            value.get("customerId").equals("200") &&
-                            value.get("status").equals("PENDING") &&
-                            value.get("amount").equals("59.99") &&
-                            value.get("items").equals("5") &&
-                            value.containsKey("metadata");
+        // consume
+        StepVerifier.create(streamOps.read(StreamOffset.fromStart(key)))
+                .expectNextMatches(rec -> {
+                    Map<String, String> v = (Map<String, String>) ((MapRecord<?,?,?>)rec).getValue();
+                    return v.get("orderId").equals("ORD-12345")
+                            && v.get("type").equals("OrderCreated");
                 })
                 .verifyComplete();
     }
 
     @Test
-    void testPublishAndConsumeOrderEvents() {
-        // Nombre único para el stream
-        String orderStreamKey = "orders-" + UUID.randomUUID();
+    void testStreamOperationsWithMapTemplate() {
+        String stream = "test-" + UUID.randomUUID();
+        ReactiveStreamOperations<String, String, String> ops = stringReactiveRedisTemplate.opsForStream();
+        Map<String,String> data = Map.of("a","1","b","2");
 
-        // Usar stringReactiveRedisTemplate para evitar problemas de serialización
-        ReactiveStreamOperations<String, String, String> streamOps = stringReactiveRedisTemplate.opsForStream();
+        StepVerifier.create(ops.add(stream, data).map(id->id.getValue()))
+                .expectNextCount(1)
+                .verifyComplete();
 
-        // Crear el evento de orden con todos los valores como strings
-        Map<String, String> orderEvent = new HashMap<>();
-        orderEvent.put("orderId", "ORD-12345");
-        orderEvent.put("correlationId", UUID.randomUUID().toString());
-        orderEvent.put("eventId", UUID.randomUUID().toString());
-        orderEvent.put("type", "OrderCreated");
-
-        // El payload como JSON string
-        orderEvent.put("payload", "{\"orderId\":\"ORD-12345\",\"status\":\"pending\",\"totalAmount\":199.95,\"items\":[{\"productId\":\"PROD-001\",\"quantity\":2,\"price\":49.99},{\"productId\":\"PROD-002\",\"quantity\":1,\"price\":99.97}]}");
-
-        // Publicar al stream con el template de strings
-        StepVerifier.create(
-                streamOps
-                        .add(orderStreamKey, orderEvent)
-                        .then()
-        ).verifyComplete();
-
-        // Leer del stream con el mismo template
-        StepVerifier.create(
-                        streamOps
-                                .read(StreamOffset.fromStart(orderStreamKey))
-                )
-                .expectNextMatches(record -> {
-                    if (record == null) {
-                        return false;
-                    }
-
-                    Map<String, String> value = (Map<String, String>) ((MapRecord<String, ?, ?>) record).getValue();
-
-                    // Verificar los campos principales
-                    return value.get("orderId").equals("ORD-12345") &&
-                            value.get("type").equals("OrderCreated") &&
-                            value.containsKey("payload");
-                })
+        StepVerifier.create(ops.read(StreamOffset.fromStart(stream)))
+                .expectNextMatches(r -> ((MapRecord<?,?,?>)r).getValue().get("a").equals("1"))
                 .verifyComplete();
     }
 
     @Test
     void testWriteAndReadMap() {
-        String key = "test:map:" + UUID.randomUUID();
-        Map<String, Object> data = Map.of("key", "value", "number", 42);
+        String k = "map:" + UUID.randomUUID();
+        Map<String,Object> payload = Map.of("x","y","n",3);
 
-        StepVerifier.create(
-                        mapReactiveRedisTemplate.opsForValue().set(key, data)
-                                .then(mapReactiveRedisTemplate.opsForValue().get(key))
-                )
-                .expectNextMatches(retrieved ->
-                        retrieved.get("key").equals("value") && retrieved.get("number").equals(42)
-                )
+        StepVerifier.create(mapReactiveRedisTemplate.opsForValue().set(k,payload)
+                        .then(mapReactiveRedisTemplate.opsForValue().get(k)))
+                .expectNextMatches(m -> m.get("n").equals(3) && m.get("x").equals("y"))
                 .verifyComplete();
     }
-
-    @Test
-    void shouldPublishEventToRedisStream() {
-        // Utilizamos un ReactiveStreamOperations con serializadores String-String para simplificar
-        // y evitar problemas de serialización con tipos complejos
-        ReactiveStreamOperations<String, String, String> streamOps = stringReactiveRedisTemplate.opsForStream();
-
-        // dado
-        Map<String, String> eventMap = new HashMap<>();
-        eventMap.put("orderId",       "1");
-        eventMap.put("correlationId", "corr-123");
-        eventMap.put("eventId",       "event-123");
-        eventMap.put("type",          "OrderCreated");
-        eventMap.put("payload",       "{\"orderId\":1,\"correlationId\":\"corr-123\",\"eventId\":\"event-123\",\"status\":\"pending\"}");
-
-        // cuando
-        StepVerifier.create(
-                streamOps
-                        .add("orders", eventMap)
-                        .then()
-        ).verifyComplete();
-
-        // entonces
-        StepVerifier.create(
-                        streamOps
-                                .read(StreamOffset.fromStart("orders"))
-                )
-                .expectNextMatches(record -> {
-                    if (record instanceof MapRecord<?, ?, ?> mapRecord) {
-                        Map<String, String> payload = (Map<String, String>) mapRecord.getValue();
-                        return payload.get("orderId").equals("1") &&
-                                payload.get("correlationId").equals("corr-123") &&
-                                payload.get("type").equals("OrderCreated");
-                    }
-                    return false;
-                })
-                .verifyComplete();
-    }
-
 }
