@@ -1,0 +1,14 @@
+-------------------------------------------------------------------------------
+Test set: com.example.order.service.dbtest.DatabaseClientPureTest
+-------------------------------------------------------------------------------
+Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 0.002 s <<< FAILURE! -- in com.example.order.service.dbtest.DatabaseClientPureTest
+com.example.order.service.dbtest.DatabaseClientPureTest -- Time elapsed: 0.002 s <<< ERROR!
+java.lang.IllegalStateException: Mapped port can only be obtained after the container is started
+	at org.testcontainers.shaded.com.google.common.base.Preconditions.checkState(Preconditions.java:513)
+	at org.testcontainers.containers.ContainerState.getMappedPort(ContainerState.java:161)
+	at java.base/java.util.Optional.map(Optional.java:260)
+	at org.testcontainers.containers.ContainerState.getFirstMappedPort(ContainerState.java:143)
+	at com.example.order.service.dbtest.DatabaseClientPureTest.setUp(DatabaseClientUnitTest.java:34)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+
