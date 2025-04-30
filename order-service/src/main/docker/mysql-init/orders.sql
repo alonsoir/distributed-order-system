@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     correlation_id VARCHAR(36) NOT NULL,
     event_id VARCHAR(36) NOT NULL,
     payload TEXT NOT NULL,
+    topic VARCHAR(255) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_correlation_id (correlation_id)
 );
@@ -26,10 +27,11 @@ CREATE PROCEDURE insert_outbox(
     IN p_event_type VARCHAR(50),
     IN p_correlation_id VARCHAR(36),
     IN p_event_id VARCHAR(36),
-    IN p_payload TEXT
+    IN p_payload TEXT,
+    IN p_topic VARCHAR(255)
 )
 BEGIN
-    INSERT INTO outbox (event_type, correlation_id, event_id, payload)
-    VALUES (p_event_type, p_correlation_id, p_event_id, p_payload);
+    INSERT INTO outbox (event_type, correlation_id, event_id, payload, topic, created_at)
+    VALUES (p_event_type, p_correlation_id, p_event_id, p_payload, p_topic, NOW());
 END //
 DELIMITER ;

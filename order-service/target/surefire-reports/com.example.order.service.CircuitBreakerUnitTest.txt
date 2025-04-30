@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.example.order.service.CircuitBreakerUnitTest
--------------------------------------------------------------------------------
-Tests run: 3, Failures: 0, Errors: 0, Skipped: 1, Time elapsed: 0.638 s -- in com.example.order.service.CircuitBreakerUnitTest

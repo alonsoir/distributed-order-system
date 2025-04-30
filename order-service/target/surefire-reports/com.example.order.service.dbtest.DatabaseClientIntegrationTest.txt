@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.example.order.service.dbtest.DatabaseClientIntegrationTest
--------------------------------------------------------------------------------
-Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 12.08 s -- in com.example.order.service.dbtest.DatabaseClientIntegrationTest
