@@ -1,0 +1,13 @@
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/BaseIntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/SimpleTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/SimpleTestcontainersTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/CircuitBreakerUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/DLQManagerTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/EventPublisherTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/InventoryServiceUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/OrderServiceIntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/OrderServiceUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/RedisUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/SagaOrchestratorUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/dbtest/DatabaseClientIntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/dbtest/DatabaseClientUnitTest.java

@@ -2,13 +2,14 @@ package com.example.order;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.Arrays;
 
-@Testcontainers
+@SpringBootTest
 class SimpleTest {
+
     @Autowired
     private ApplicationContext context;
 

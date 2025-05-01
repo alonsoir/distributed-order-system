@@ -1,0 +1,40 @@
+{
+  "groups": [
+    {
+      "name": "dlq",
+      "type": "com.example.order.service.DLQManager$DLQConfig",
+      "sourceType": "com.example.order.service.DLQManager$DLQConfig"
+    },
+    {
+      "name": "event.persistence",
+      "type": "com.example.order.config.EventPersistenceConfig",
+      "sourceType": "com.example.order.config.EventPersistenceConfig"
+    }
+  ],
+  "properties": [
+    {
+      "name": "dlq.backoff-seconds",
+      "type": "java.lang.Long",
+      "sourceType": "com.example.order.service.DLQManager$DLQConfig",
+      "defaultValue": 1
+    },
+    {
+      "name": "dlq.process-interval",
+      "type": "java.lang.Long",
+      "sourceType": "com.example.order.service.DLQManager$DLQConfig",
+      "defaultValue": 60000
+    },
+    {
+      "name": "dlq.retry-max-attempts",
+      "type": "java.lang.Long",
+      "sourceType": "com.example.order.service.DLQManager$DLQConfig",
+      "defaultValue": 3
+    },
+    {
+      "name": "event.persistence.topics",
+      "type": "java.util.Map<java.lang.String,com.example.order.config.EventPersistenceConfig$PersistenceConfig>",
+      "sourceType": "com.example.order.config.EventPersistenceConfig"
+    }
+  ],
+  "hints": []
+}
