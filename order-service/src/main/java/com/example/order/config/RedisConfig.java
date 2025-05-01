@@ -5,6 +5,8 @@ import com.example.order.events.EventWrapper;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,12 +19,14 @@ import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 import reactor.core.publisher.Mono;
+import org.springframework.messaging.converter.MessageConversionException;
+
 
 import java.util.Map;
 
 @Configuration
 public class RedisConfig {
-
+    private static final Logger logger = LoggerFactory.getLogger(RedisConfig.class);
     public static final String EVENT_TOPIC = "order.events";
 
     @Bean
@@ -95,7 +99,7 @@ public class RedisConfig {
             return new ReactiveRedisMessageListenerContainer(connectionFactory);
         } catch (Exception e) {
             // Log de la excepción
-            System.err.println("Error al crear el contenedor de mensajes Redis: " + e.getMessage());
+            logger.error("Error al crear el contenedor de mensajes Redis: " + e.getMessage());
             return null; // En caso de error, devolvemos null y Spring no inicializará este bean
         }
     }
@@ -115,7 +119,8 @@ public class RedisConfig {
                             try {
                                 return objectMapper.readValue(message.getMessage(), EventWrapper.class);
                             } catch (Exception e) {
-                                throw new RuntimeException("Error deserializando el mensaje", e);
+                                throw new MessageConversionException(
+                                        "Error deserializando el mensaje: " + message.getMessage(), e);
                             }
                         })
                         .flatMap(event -> Mono.fromRunnable(() -> consumer.handleEvent(event)))

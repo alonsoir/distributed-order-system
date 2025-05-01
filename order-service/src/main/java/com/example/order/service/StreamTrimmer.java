@@ -9,7 +9,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
@@ -34,7 +33,7 @@ public class StreamTrimmer {
 
     @Scheduled(fixedDelayString = "${redis.trim.interval:60000}")
     public void trimStreams() {
-        if (!redisStatusChecker.isRedisAvailable().block()) {
+        if (Boolean.FALSE.equals(redisStatusChecker.isRedisAvailable().block())) {
             log.warn("Redis is unavailable, skipping stream trimming");
             return;
         }
