@@ -106,17 +106,65 @@ Alternatively, use Testcontainers for integration tests (no local setup required
 Initialize the MySQL database:
 Run the schema.sql script to create the necessary tables (orders, outbox, processed_events).
 
-Build and run tests:
+First, run SonarQube, obtain a token, and configure it in the sonar-project.properties file, or
+run this command:
+### How to obtain a SonarQube token:
 ```
-bash
+Descarga SonarQube:
+Ve al sitio oficial de SonarQube y descarga la edición Community (gratuita).
 
-mvn clean test
+Descomprime el archivo en una carpeta, por ejemplo, ~/sonarqube.
+
+Configura SonarQube:
+Navega al directorio descomprimido:
+
+    cd ~/sonarqube
+
+Opcionalmente, edita el archivo de configuración conf/sonar.properties para personalizar puertos o ajustes (por defecto, usa el puerto 9000).
+
+Inicia SonarQube:
+Ejecuta el script correspondiente para macOS:
+
+
+    ./bin/macosx-universal-64/sonar.sh start
+
+Esto inicia el servidor SonarQube. Puede tomar unos segundos.
+
+Accede a SonarQube:
+Abre tu navegador y ve a http://localhost:9000.
+
+Inicia sesión con las credenciales predeterminadas:
+    Usuario: admin
+    
+    Contraseña: admin
+
+Cambia la contraseña cuando se te solicite.
+
+Para detener SonarQube:
+
+./bin/macosx-universal-64/sonar.sh stop
+
+Account/My Account/Security/Generate Token/Enter name/Enter Type/Expires is
+once create, you can use it this way:
+
+mvn clean verify sonar:sonar -Dsonar.token=YOUR_TOKEN
+You can paste it in the sonar-project.properties file, but i dont recommend it
+if the token never expires and you are going to upload it to github.
+Your choice.
+```
+
+
+```
+Build and run tests with sonar coverage:
+    mvn clean verify sonar:sonar -Dsonar.token=YOUR_SONAR_TOKEN
+```
+```
+Build and run tests with sonar coverage:
+    mvn clean test
+```
 ```
 Run the application:
-```
-bash
-
-mvn spring-boot:run
+    mvn spring-boot:run
 ```
 3. Future Improvements
 Refactoring:
