@@ -1,0 +1,13 @@
+# Configuración global del proyecto
+sonar.projectKey=distributed-order-system
+sonar.projectName=Distributed Order System
+sonar.sourceEncoding=UTF-8
+sonar.host.url=http://localhost:9000
+# Definición de módulos
+sonar.modules=order-service
+
+# Configuración específica para el módulo order-service
+order-service.sonar.projectKey=order-service
+order-service.sonar.projectName=Order Service
+order-service.sonar.sources=src/main/java
+order-service.sonar.java.binaries=target/classes

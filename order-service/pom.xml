@@ -13,7 +13,6 @@
 
   <properties>
     <java.version>21</java.version>
-    <spring-boot.version>3.3.4</spring-boot.version>
     <resilience4j.version>2.3.0</resilience4j.version>
     <testcontainers.version>1.21.0</testcontainers.version>
     <jackson.version>2.18.0</jackson.version>
@@ -21,6 +20,11 @@
   </properties>
 
   <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-configuration-processor</artifactId>
+      <optional>true</optional>
+    </dependency>
     <!-- Spring Boot Starters -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -121,6 +125,8 @@
     <dependency>
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>
+      <version>${lombok.version}</version>
+      <scope>provided</scope>
     </dependency>
 
     <!-- Test Dependencies -->
@@ -197,6 +203,16 @@
         <configuration>
           <source>${java.version}</source>
           <target>${java.version}</target>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+            </path>
+            <path>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-configuration-processor</artifactId>
+            </path>
+          </annotationProcessorPaths>
         </configuration>
       </plugin>
       <plugin>

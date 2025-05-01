@@ -5,29 +5,33 @@ import lombok.Builder;
 import lombok.Getter;
 import reactor.core.publisher.Mono;
 
-import java.util.Objects;
-import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.function.Function;
 
-@Getter
 @Builder
+@Getter
 public class SagaStep {
     private final String name;
-    private final Supplier<Mono<?>> action;
+    private final String topic;
+    private final Supplier<Mono<Void>> action;
+    private final Supplier<Mono<Void>> compensation;
     private final Function<String, OrderEvent> successEvent;
-    private final Supplier<Mono<?>> compensation;
     private final Long orderId;
     private final String correlationId;
     private final String eventId;
 
-    public SagaStep(String name, Supplier<Mono<?>> action, Function<String, OrderEvent> successEvent,
-                    Supplier<Mono<?>> compensation, Long orderId, String correlationId, String eventId) {
-        this.name = Objects.requireNonNull(name, "Step name cannot be null");
-        this.action = Objects.requireNonNull(action, "Action cannot be null");
-        this.successEvent = Objects.requireNonNull(successEvent, "Success event cannot be null");
-        this.compensation = Objects.requireNonNull(compensation, "Compensation cannot be null");
-        this.orderId = Objects.requireNonNull(orderId, "OrderId cannot be null");
-        this.correlationId = Objects.requireNonNull(correlationId, "CorrelationId cannot be null");
-        this.eventId = Objects.requireNonNull(eventId, "EventId cannot be null");
+    public SagaStep(String name, String topic, Supplier<Mono<Void>> action, Supplier<Mono<Void>> compensation,
+                    Function<String, OrderEvent> successEvent, Long orderId, String correlationId, String eventId) {
+        if (topic == null) {
+            throw new IllegalArgumentException("Topic cannot be null");
+        }
+        this.name = name;
+        this.topic = topic;
+        this.action = action;
+        this.compensation = compensation;
+        this.successEvent = successEvent;
+        this.orderId = orderId;
+        this.correlationId = correlationId;
+        this.eventId = eventId;
     }
 }

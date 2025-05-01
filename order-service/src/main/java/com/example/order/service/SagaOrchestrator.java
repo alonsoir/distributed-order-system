@@ -1,6 +1,7 @@
 package com.example.order.service;
 
 import com.example.order.domain.Order;
+import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.events.StockReservedEvent;
@@ -15,17 +16,15 @@ import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
-
 import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
 public class SagaOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(SagaOrchestrator.class);
-
     private final DatabaseClient databaseClient;
     private final InventoryService inventoryService;
-    @Qualifier("orderEventPublisher") // Especifica el bean correcto
+    @Qualifier("orderEventPublisher")
     private final EventPublisher eventPublisher;
     private final CompensationManager compensationManager;
     private final TransactionalOperator transactionalOperator;
@@ -35,6 +34,7 @@ public class SagaOrchestrator {
         return createOrder(orderId, correlationId)
                 .flatMap(order -> executeStep(SagaStep.builder()
                         .name("reserveStock")
+                        .topic(EventTopics.STOCK_RESERVED.getTopic())
                         .action(() -> inventoryService.reserveStock(orderId, quantity))
                         .compensation(() -> inventoryService.releaseStock(orderId, quantity))
                         .successEvent(eventId -> new StockReservedEvent(orderId, correlationId, eventId, quantity))
@@ -57,10 +57,7 @@ public class SagaOrchestrator {
     Mono<OrderEvent> executeStep(SagaStep step) {
         log.info("Executing step {} for order {} correlationId {}", step.getName(), step.getOrderId(), step.getCorrelationId());
         Mono<OrderEvent> stepMono = step.getAction().get()
-                .then(Mono.defer(() -> {
-                    OrderEvent event = step.getSuccessEvent().apply(step.getEventId());
-                    return eventPublisher.publishEvent(event, step.getName());
-                }))
+                .then(Mono.defer(() -> publishEvent(step.getSuccessEvent().apply(step.getEventId()), step.getName(), step.getTopic())))
                 .doOnSuccess(event -> log.info("Step {} completed for order {}", step.getName(), step.getOrderId()))
                 .doOnError(e -> log.error("Error in step {} for order {}: {}", step.getName(), step.getOrderId(), e.getMessage(), e));
 
@@ -98,7 +95,7 @@ public class SagaOrchestrator {
                         .bind("eventId", eventId)
                         .then())
                 .doOnSuccess(v -> log.info("Inserted processed event for order {}", orderId))
-                .then(eventPublisher.publishEvent(event, "createOrder"))
+                .then(publishEvent(event, "createOrder", EventTopics.ORDER_CREATED.getTopic()))
                 .doOnSuccess(v -> log.info("Published event for order {}", orderId))
                 .then(Mono.just(new Order(orderId, "pending", correlationId)))
                 .doOnSuccess(v -> log.info("Created order object for {}", orderId))
@@ -117,6 +114,13 @@ public class SagaOrchestrator {
     }
 
     public Mono<Void> publishFailedEvent(OrderFailedEvent event) {
-        return eventPublisher.publishEvent(event, "failedEvent").then();
+        return publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopic()).then();
+    }
+
+    private Mono<OrderEvent> publishEvent(OrderEvent event, String step, String topic) {
+        return eventPublisher.publishEvent(event, step, topic)
+                .map(Result::getEvent)
+                .doOnSuccess(v -> log.info("Published event {} for step {}", event.getEventId(), step))
+                .doOnError(e -> log.error("Failed to publish event {} for step {}: {}", event.getEventId(), step, e.getMessage()));
     }
 }

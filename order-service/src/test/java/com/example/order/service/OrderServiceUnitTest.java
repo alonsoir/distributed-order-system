@@ -1,11 +1,8 @@
 package com.example.order.service;
 
+import com.example.order.events.EventTopics;
 import com.example.order.domain.Order;
-import com.example.order.events.OrderCreatedEvent;
-import com.example.order.events.OrderEvent;
-import com.example.order.events.OrderEventType;
-import com.example.order.events.OrderFailedEvent;
-import com.example.order.events.StockReservedEvent;
+import com.example.order.events.*;
 import com.example.order.model.SagaStep;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -537,16 +534,18 @@ class OrderServiceUnitTest {
         verify(timerSample).stop(sagaTimer);
     }
 
+
     private SagaStep createSagaStep(Long orderId, String correlationId, String eventId, int quantity) {
-        return new SagaStep(
-                "reserveStock",
-                () -> inventoryService.reserveStock(orderId, quantity),
-                payload -> new StockReservedEvent(orderId, correlationId, eventId, quantity),
-                () -> Mono.empty(),
-                orderId,
-                correlationId,
-                eventId
-        );
+        return SagaStep.builder()
+                .name("reserveStock")
+                .topic(EventTopics.STOCK_RESERVED.getTopic())
+                .action(() -> inventoryService.reserveStock(orderId, quantity))
+                .compensation(() -> inventoryService.releaseStock(orderId, quantity))
+                .successEvent(payload -> new StockReservedEvent(orderId, correlationId, eventId, quantity))
+                .orderId(orderId)
+                .correlationId(correlationId)
+                .eventId(eventId)
+                .build();
     }
 
     @Test
