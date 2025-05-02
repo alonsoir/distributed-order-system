@@ -1,9 +1,10 @@
-package com.example.order;
+package com.example.order.service.integration;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
@@ -12,6 +13,7 @@ import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
+@ActiveProfiles("integration")
 public abstract class BaseIntegrationTest {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(BaseIntegrationTest.class);

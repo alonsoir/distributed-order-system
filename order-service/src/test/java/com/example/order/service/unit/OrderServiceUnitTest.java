@@ -1,9 +1,13 @@
-package com.example.order.service;
+package com.example.order.service.unit;
 
 import com.example.order.events.EventTopics;
 import com.example.order.domain.Order;
 import com.example.order.events.*;
 import com.example.order.model.SagaStep;
+import com.example.order.service.InventoryService;
+import com.example.order.service.OrderService;
+import com.example.order.service.OrderServiceImpl;
+import com.example.order.service.SagaOrchestrator;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.Counter;
@@ -26,6 +30,7 @@ import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.data.redis.core.ReactiveStreamOperations;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Hooks;
 import reactor.core.publisher.Mono;
@@ -45,6 +50,8 @@ import static org.mockito.Mockito.*;
  * including success, failure, and resilience scenarios.
  */
 @ExtendWith(MockitoExtension.class)
+@ActiveProfiles("unit")
+
 class OrderServiceUnitTest {
 
     /**

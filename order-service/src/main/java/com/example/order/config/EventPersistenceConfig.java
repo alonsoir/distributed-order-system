@@ -1,4 +1,5 @@
 package com.example.order.config;
+
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -13,17 +14,11 @@ import java.util.Map;
 public class EventPersistenceConfig {
     private Map<String, PersistenceConfig> topics;
 
+    @Getter
+    @Setter
     public static class PersistenceConfig {
         private boolean persistToDisk;
         private Importance importance;
-
-        public boolean isPersistToDisk() {
-            return persistToDisk;
-        }
-
-        public Importance getImportance() {
-            return importance;
-        }
     }
 
     public enum Importance {

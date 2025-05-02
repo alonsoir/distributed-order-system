@@ -1,8 +1,7 @@
-package com.example.order.service;
+package com.example.order.service.unit;
 
 import com.example.order.config.RedisConfig;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
@@ -27,7 +26,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-@ActiveProfiles("test")
+@ActiveProfiles("unit")
 @SpringBootTest(
         classes = RedisConfig.class
 )

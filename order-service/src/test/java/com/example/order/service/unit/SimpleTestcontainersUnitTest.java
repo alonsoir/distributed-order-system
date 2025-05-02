@@ -1,6 +1,7 @@
-package com.example.order;
+package com.example.order.service.unit;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -10,7 +11,8 @@ import org.testcontainers.utility.DockerImageName;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
-public class SimpleTestcontainersTest {
+@ActiveProfiles("unit")
+public class SimpleTestcontainersUnitTest {
 
     @Container
     private static final MySQLContainer<?> mysqlContainer = new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))

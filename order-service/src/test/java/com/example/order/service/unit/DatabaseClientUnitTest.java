@@ -1,4 +1,4 @@
-package com.example.order.service.dbtest;
+package com.example.order.service.unit;
 
 import com.example.order.domain.Order;
 import io.asyncer.r2dbc.mysql.MySqlConnectionFactoryProvider;
@@ -6,15 +6,20 @@ import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.ConnectionFactoryOptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.autoconfigure.data.r2dbc.DataR2dbcTest;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
-
 import static io.r2dbc.spi.ConnectionFactoryOptions.*;
 
-class DatabaseClientPureTest {
+@DataR2dbcTest
+@Testcontainers
+@ActiveProfiles("unit")
+class DatabaseClientUnitTest {
 
     @Container
     static MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.0")

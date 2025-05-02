@@ -1,15 +1,18 @@
-package com.example.order.service;
+package com.example.order.service.unit;
 
+import com.example.order.service.InventoryService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.context.ActiveProfiles;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@ActiveProfiles("unit")
 class InventoryServiceUnitTest {
 
     @Mock

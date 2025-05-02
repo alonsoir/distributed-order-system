@@ -1,4 +1,4 @@
-package com.example.order.service.dbtest;
+package com.example.order.service.integration;
 
 import com.example.order.domain.Order;
 import org.junit.jupiter.api.AfterEach;
@@ -9,6 +9,7 @@ import org.springframework.boot.test.autoconfigure.data.r2dbc.DataR2dbcTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
@@ -21,6 +22,7 @@ import java.util.Arrays;
 
 @DataR2dbcTest
 @Testcontainers
+@ActiveProfiles("integration")
 class DatabaseClientIntegrationTest {
 
     @Container
