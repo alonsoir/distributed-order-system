@@ -119,7 +119,7 @@ public class SagaOrchestrator {
 
     private Mono<OrderEvent> publishEvent(OrderEvent event, String step, String topic) {
         return eventPublisher.publishEvent(event, step, topic)
-                .map(Result::getEvent)
+                .map(EventPublishOutcome::getEvent)
                 .doOnSuccess(v -> log.info("Published event {} for step {}", event.getEventId(), step))
                 .doOnError(e -> log.error("Failed to publish event {} for step {}: {}", event.getEventId(), step, e.getMessage()));
     }

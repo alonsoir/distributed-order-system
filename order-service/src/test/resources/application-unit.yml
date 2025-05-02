@@ -54,3 +54,10 @@ event:
       other-topic:
         persistToDisk: ${EVENT_PERSISTENCE_OTHER_TOPIC_PERSIST_TO_DISK:false}
         importance: ${EVENT_PERSISTENCE_OTHER_TOPIC_IMPORTANCE:LOW}
+
+logging:
+  level:
+    org.springframework.boot: DEBUG
+    org.springframework.test: DEBUG
+    org.testcontainers: DEBUG
+    com.redis.testcontainers: DEBUG

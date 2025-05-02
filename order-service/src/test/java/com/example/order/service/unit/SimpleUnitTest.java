@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @SpringBootTest
 @ActiveProfiles("unit")
-class SimpleTest {
+class SimpleUnitTest {
 
     private static RedisServer redisServer;
 

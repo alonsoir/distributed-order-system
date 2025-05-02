@@ -1,18 +1,16 @@
 package com.example.order.service;
 
-import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.core.ReactiveRedisTemplate;
-import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
-@Component
-@RequiredArgsConstructor
-public class RedisStatusChecker {
-    private final ReactiveRedisTemplate<String, Object> redisTemplate;
+/**
+ * Interface for checking Redis availability
+ */
+public interface RedisStatusChecker {
 
-    public Mono<Boolean> isRedisAvailable() {
-        return redisTemplate.opsForValue().get("health-check")
-                .thenReturn(true)
-                .onErrorResume(e -> Mono.just(false));
-    }
+    /**
+     * Checks if Redis is available
+     *
+     * @return Mono<Boolean> indicating if Redis is available (true) or not (false)
+     */
+    Mono<Boolean> isRedisAvailable();
 }

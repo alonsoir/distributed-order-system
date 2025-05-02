@@ -1,4 +1,4 @@
-package com.example.order.service.unit;
+package com.example.order.service.integration;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.ActiveProfiles;
@@ -11,8 +11,8 @@ import org.testcontainers.utility.DockerImageName;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
-@ActiveProfiles("unit")
-public class SimpleTestcontainersUnitTest {
+@ActiveProfiles("integration")
+public class SimpleTestcontainersIntegrationTest {
 
     @Container
     private static final MySQLContainer<?> mysqlContainer = new MySQLContainer<>(DockerImageName.parse("mysql:8.0"))
