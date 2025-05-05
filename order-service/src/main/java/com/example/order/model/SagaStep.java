@@ -15,13 +15,13 @@ public class SagaStep {
     private final String topic;
     private final Supplier<Mono<Void>> action;
     private final Supplier<Mono<Void>> compensation;
-    private final Function<String, OrderEvent> successEvent;
+    private final Function<Long, OrderEvent> successEvent;
     private final Long orderId;
     private final String correlationId;
     private final String eventId;
 
     public SagaStep(String name, String topic, Supplier<Mono<Void>> action, Supplier<Mono<Void>> compensation,
-                    Function<String, OrderEvent> successEvent, Long orderId, String correlationId, String eventId) {
+                    Function<Long, OrderEvent> successEvent, Long orderId, String correlationId, String eventId) {
         if (topic == null) {
             throw new IllegalArgumentException("Topic cannot be null");
         }

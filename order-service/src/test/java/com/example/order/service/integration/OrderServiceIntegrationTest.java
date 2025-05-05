@@ -1,5 +1,6 @@
 package com.example.order.service.integration;
 
+import com.example.order.service.IdGenerator;
 import com.example.order.service.InventoryService;
 import com.example.order.service.OrderService;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,9 @@ class OrderServiceIntegrationTest {
     @Autowired
     private InventoryService inventoryService;
 
+    @Autowired
+    private IdGenerator idGenerator;
+
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.r2dbc.url", () -> "r2dbc:mysql://" + mysql.getHost() + ":" + mysql.getFirstMappedPort() + "/orders");
@@ -53,13 +57,14 @@ class OrderServiceIntegrationTest {
 
     @Test
     void shouldProcessOrderSuccessfully() {
-        Long orderId = 1L;
+        Long orderId = idGenerator.generateOrderId();
+        String externalReference = idGenerator.generateExternalReference();
         int quantity = 10;
         double amount = 100.0;
 
         when(inventoryService.reserveStock(anyLong(), anyInt())).thenReturn(Mono.empty());
 
-        StepVerifier.create(orderService.processOrder(orderId, quantity, amount))
+        StepVerifier.create(orderService.processOrder(orderId, externalReference, quantity, amount))
                 .expectNextMatches(order ->
                         order.id().equals(orderId) &&
                                 order.status().equals("completed"))

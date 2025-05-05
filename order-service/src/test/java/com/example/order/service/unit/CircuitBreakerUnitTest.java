@@ -2,6 +2,7 @@ package com.example.order.service.unit;
 
 import com.example.order.domain.Order;
 import com.example.order.events.OrderFailedEvent;
+import com.example.order.service.IdGenerator;
 import com.example.order.service.InventoryService;
 import com.example.order.service.OrderServiceImpl;
 import com.example.order.service.SagaOrchestrator;
@@ -50,7 +51,8 @@ class CircuitBreakerUnitTest {
     private SagaOrchestrator sagaOrchestrator;
     @Mock
     private CircuitBreaker circuitBreaker;
-
+    @Mock
+    private IdGenerator idGenerator;
     @InjectMocks
     private OrderServiceImpl orderService;
 
@@ -68,8 +70,8 @@ class CircuitBreakerUnitTest {
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(false);
         when(sagaOrchestrator.publishFailedEvent(any(OrderFailedEvent.class))).thenReturn(Mono.empty());
-
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        String externalReference = idGenerator.generateExternalReference();
+        Mono<Order> result = orderService.processOrder(orderId, externalReference, quantity, amount);
 
         StepVerifier.create(result)
                 .expectNextMatches(order -> order.status().equals("failed") && order.id().equals(orderId))
@@ -77,7 +79,7 @@ class CircuitBreakerUnitTest {
 
         verify(circuitBreaker).tryAcquirePermission(); // Solo una vez
         verify(sagaOrchestrator).publishFailedEvent(any(OrderFailedEvent.class));
-        verify(sagaOrchestrator, never()).executeOrderSaga(anyLong(), anyInt(), anyDouble(), anyString());
+        verify(sagaOrchestrator, never()).executeOrderSaga(anyLong(), anyInt(), anyLong(), anyDouble(), anyString());
     }
 
     @Test
@@ -86,11 +88,12 @@ class CircuitBreakerUnitTest {
         int quantity = 10;
         double amount = 100.0;
         String correlationId = "test-correlation-id";
+        Long eventId = 1L;
         Order order = new Order(orderId, "completed", correlationId);
 
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
-        when(sagaOrchestrator.executeOrderSaga(eq(orderId), eq(quantity), eq(amount), anyString()))
+        when(sagaOrchestrator.executeOrderSaga(eq(orderId), eq(quantity), anyLong(), eq(amount), anyString()))
                 .thenReturn(Mono.just(order));
         when(meterRegistry.counter("orders_success")).thenReturn(mock(Counter.class));
 
@@ -101,7 +104,7 @@ class CircuitBreakerUnitTest {
                 .verifyComplete();
 
         verify(circuitBreaker, times(2)).tryAcquirePermission(); // Dos veces
-        verify(sagaOrchestrator).executeOrderSaga(eq(orderId), eq(quantity), eq(amount), anyString());
+        verify(sagaOrchestrator).executeOrderSaga(eq(orderId), eq(quantity), anyLong(), eq(amount), anyString());
         verify(meterRegistry).counter("orders_success");
     }
 
@@ -112,10 +115,10 @@ class CircuitBreakerUnitTest {
         Long orderId = 2L;
         int quantity = 5;
         double amount = 50.0;
-
+        Long eventId = 2L;
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
-        when(sagaOrchestrator.executeOrderSaga(eq(orderId), eq(quantity), eq(amount), anyString()))
+        when(sagaOrchestrator.executeOrderSaga(eq(orderId), eq(quantity), eq(eventId),eq(amount), anyString()))
                 .thenReturn(Mono.error(new RuntimeException("Saga failed")));
         when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
 

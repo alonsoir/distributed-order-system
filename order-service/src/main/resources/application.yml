@@ -52,3 +52,8 @@ event:
       other-topic:
         persistToDisk: ${EVENT_PERSISTENCE_OTHER_TOPIC_PERSIST_TO_DISK:false}
         importance: ${EVENT_PERSISTENCE_OTHER_TOPIC_IMPORTANCE:LOW}
+
+app:
+  id:
+    check-collisions: ${APP_ID_CHECK_COLLISIONS:false}
+  node-id: ${APP_NODE_ID:0}

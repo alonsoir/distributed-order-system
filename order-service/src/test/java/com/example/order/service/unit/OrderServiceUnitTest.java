@@ -37,7 +37,6 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.util.Map;
-import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,7 +50,6 @@ import static org.mockito.Mockito.*;
  */
 @ExtendWith(MockitoExtension.class)
 @ActiveProfiles("unit")
-
 class OrderServiceUnitTest {
 
     /**
@@ -68,6 +66,13 @@ class OrderServiceUnitTest {
         String ERROR_NULL_STEP_NAME = "Step name cannot be null";
         String ERROR_NULL_STEP_ACTION = "Action cannot be null";
     }
+
+    // Constantes para trazabilidad
+    private static final Long TEST_ORDER_ID = 123456L;
+    private static final String TEST_CORRELATION_ID = "test-correlation-id-fixed";
+    private static final String TEST_EVENT_ID = "test-event-id-fixed";;
+    private static final int TEST_QUANTITY = 10;
+    private static final double TEST_AMOUNT = 100.0;
 
     @Mock
     private DatabaseClient databaseClient;
@@ -176,15 +181,10 @@ class OrderServiceUnitTest {
 
     @Test
     void shouldExecuteCompensationOnStepFailure() {
-        Long orderId = 1L;
-        String correlationId = "corr-id";
-        String eventId = UUID.randomUUID().toString();
-        int quantity = 10;
-
-        SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
-        when(inventoryService.reserveStock(orderId, quantity))
+        SagaStep step = createSagaStep(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, TEST_QUANTITY);
+        when(inventoryService.reserveStock(TEST_ORDER_ID, TEST_QUANTITY))
                 .thenReturn(Mono.error(new RuntimeException("Stock reservation failed")));
-        when(inventoryService.releaseStock(orderId, quantity)).thenReturn(Mono.empty());
+        when(inventoryService.releaseStock(TEST_ORDER_ID, TEST_QUANTITY)).thenReturn(Mono.empty());
 
         Mono<OrderEvent> result = orderService.executeStep(step);
 
@@ -192,8 +192,8 @@ class OrderServiceUnitTest {
                 .expectErrorMatches(throwable -> throwable.getMessage().contains("Stock reservation failed"))
                 .verify();
 
-        verify(inventoryService).reserveStock(orderId, quantity);
-        verify(inventoryService).releaseStock(orderId, quantity); // Verify compensation
+        verify(inventoryService).reserveStock(TEST_ORDER_ID, TEST_QUANTITY);
+        verify(inventoryService).releaseStock(TEST_ORDER_ID, TEST_QUANTITY); // Verify compensation
     }
 
     /**
@@ -201,18 +201,14 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldPersistOrderSuccessfully() {
-        Long orderId = 1L;
-        int quantity = 10;
-        double amount = 100.0;
-        String correlationId = UUID.randomUUID().toString();
-        Order order = new Order(orderId, "completed", correlationId);
+        Order order = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
 
-        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)).thenReturn(Mono.just(order));
+        when(sagaOrchestrator.executeOrderSaga(TEST_ORDER_ID, TEST_QUANTITY, TEST_EVENT_ID, TEST_AMOUNT, TEST_CORRELATION_ID)).thenReturn(Mono.just(order));
 
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result)
-                .expectNextMatches(o -> o.id().equals(orderId) && o.status().equals("completed"))
+                .expectNextMatches(o -> o.id().equals(TEST_ORDER_ID) && o.status().equals("completed"))
                 .verifyComplete();
 
         verify(ordersSuccessCounter).increment();
@@ -223,20 +219,20 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldPublishEventsDuringOrderProcessing() {
-        Long orderId = 1L;
-        int quantity = 10;
-        double amount = 100.0;
-        String correlationId = UUID.randomUUID().toString();
-        Order order = new Order(orderId, "completed", correlationId);
+        Order order = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
 
-        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)).thenReturn(Mono.just(order));
+        when(sagaOrchestrator.executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyLong(), eq(TEST_AMOUNT), eq(TEST_CORRELATION_ID)))
+                .thenReturn(Mono.just(order));
         when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
 
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result).expectNextCount(1).verifyComplete();
 
-        verify(sagaOrchestrator).executeOrderSaga(orderId, quantity, amount, anyString());
+        // Verificamos que se llamó al método executeOrderSaga con los parámetros correctos
+        // Usamos anyLong() para el eventId porque podría generarse en el método processOrder
+        verify(sagaOrchestrator).executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyLong(),
+                eq(TEST_AMOUNT), anyString());
     }
 
     /**
@@ -244,15 +240,12 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldUpdateMetricsDuringOrderProcessing() {
-        Long orderId = 1L;
-        int quantity = 10;
-        double amount = 100.0;
-        String correlationId = UUID.randomUUID().toString();
-        Order order = new Order(orderId, "completed", correlationId);
+        Order order = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
 
-        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)).thenReturn(Mono.just(order));
+        when(sagaOrchestrator.executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyLong(), eq(TEST_AMOUNT), anyString()))
+                .thenReturn(Mono.just(order));
 
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result).expectNextCount(1).verifyComplete();
 
@@ -264,20 +257,16 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldHandleCircuitBreakerOpen() {
-        Long orderId = 1L;
-        int quantity = 10;
-        double amount = 100.0;
-
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(false);
         when(circuitBreaker.getState()).thenReturn(CircuitBreaker.State.OPEN);
         when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
 
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result)
                 .expectNextMatches(order ->
-                        order.id().equals(orderId) &&
+                        order.id().equals(TEST_ORDER_ID) &&
                                 order.status().equals("failed") &&
                                 order.correlationId().equals("unknown"))
                 .verifyComplete();
@@ -290,21 +279,18 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldHandleCircuitBreakerHalfOpen() {
-        Long orderId = 1L;
-        int quantity = 10;
-        double amount = 100.0;
-        String correlationId = UUID.randomUUID().toString();
-        Order order = new Order(orderId, "completed", correlationId);
+        Order order = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
 
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
         when(circuitBreaker.getState()).thenReturn(CircuitBreaker.State.HALF_OPEN);
-        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)).thenReturn(Mono.just(order));
+        when(sagaOrchestrator.executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyLong(), eq(TEST_AMOUNT), anyString()))
+                .thenReturn(Mono.just(order));
 
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result)
-                .expectNextMatches(o -> o.id().equals(orderId) && o.status().equals("completed"))
+                .expectNextMatches(o -> o.id().equals(TEST_ORDER_ID) && o.status().equals("completed"))
                 .verifyComplete();
 
         verify(ordersSuccessCounter).increment();
@@ -324,14 +310,14 @@ class OrderServiceUnitTest {
                                 throwable.getMessage().contains(expectedError))
                 .verify();
 
-        verify(sagaOrchestrator, never()).executeOrderSaga(anyLong(), anyInt(), anyDouble(), anyString());
+        verify(sagaOrchestrator, never()).executeOrderSaga(anyLong(), anyInt(), anyLong(), anyDouble(), anyString());
     }
 
     private static Stream<Arguments> provideInvalidOrderInputs() {
         return Stream.of(
-                Arguments.of(0L, 10, 100.0, OrderServiceConstants.ERROR_INVALID_ORDER_ID),
-                Arguments.of(1L, 0, 100.0, OrderServiceConstants.ERROR_INVALID_QUANTITY),
-                Arguments.of(1L, 10, -1.0, OrderServiceConstants.ERROR_INVALID_AMOUNT)
+                Arguments.of(0L, TEST_QUANTITY, TEST_AMOUNT, OrderServiceConstants.ERROR_INVALID_ORDER_ID),
+                Arguments.of(TEST_ORDER_ID, 0, TEST_AMOUNT, OrderServiceConstants.ERROR_INVALID_QUANTITY),
+                Arguments.of(TEST_ORDER_ID, TEST_QUANTITY, -1.0, OrderServiceConstants.ERROR_INVALID_AMOUNT)
         );
     }
 
@@ -340,20 +326,15 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldHandleTimeoutDuringOrderProcessing() {
-        Long orderId = 1L;
-        int quantity = 10;
-        double amount = 100.0;
-        String correlationId = UUID.randomUUID().toString();
-
-        when(sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId))
+        when(sagaOrchestrator.executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyLong(), eq(TEST_AMOUNT), anyString()))
                 .thenReturn(Mono.error(new RuntimeException("Timeout")));
         when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
 
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result)
                 .expectNextMatches(order ->
-                        order.id().equals(orderId) &&
+                        order.id().equals(TEST_ORDER_ID) &&
                                 order.status().equals("failed") &&
                                 order.correlationId().equals("unknown"))
                 .verifyComplete();
@@ -368,20 +349,17 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldPersistOrderDuringCreation() {
-        Long orderId = 1L;
-        String correlationId = "test-correlation-id";
-
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         when(databaseClient.sql(sqlCaptor.capture())).thenReturn(executeSpec);
-        when(streamOps.add(anyString(), anyMap())).thenReturn((Mono<RecordId>) Mono.just(RecordId.of("record-id")));
+        when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
-        Mono<Order> result = orderService.createOrder(orderId, correlationId);
+        Mono<Order> result = orderService.createOrder(TEST_ORDER_ID, TEST_CORRELATION_ID);
 
         StepVerifier.create(result)
                 .expectNextMatches(order ->
-                        order.id().equals(orderId) &&
+                        order.id().equals(TEST_ORDER_ID) &&
                                 order.status().equals("pending") &&
-                                order.correlationId().equals(correlationId))
+                                order.correlationId().equals(TEST_CORRELATION_ID))
                 .verifyComplete();
 
         assertTrue(sqlCaptor.getAllValues().contains("INSERT INTO orders (id, status, correlation_id) VALUES (:id, :status, :correlationId)"));
@@ -392,20 +370,18 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldPublishOrderCreatedEvent() {
-        Long orderId = 1L;
-        String correlationId = "test-correlation-id";
-
         when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
-        Mono<Order> result = orderService.createOrder(orderId, correlationId);
+        Mono<Order> result = orderService.createOrder(TEST_ORDER_ID, TEST_CORRELATION_ID);
 
         StepVerifier.create(result).expectNextCount(1).verifyComplete();
+
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> eventMapCaptor = ArgumentCaptor.forClass(Map.class);
         verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
         assertEquals("OrderCreated", eventMapCaptor.getValue().get("type"));
-        assertEquals(orderId, eventMapCaptor.getValue().get("orderId"));
-        assertEquals(correlationId, eventMapCaptor.getValue().get("correlationId"));
+        assertEquals(TEST_ORDER_ID, eventMapCaptor.getValue().get("orderId"));
+        assertEquals(TEST_CORRELATION_ID, eventMapCaptor.getValue().get("correlationId"));
     }
 
     /**
@@ -413,8 +389,6 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldHandleDatabaseFailureDuringOrderCreation() {
-        Long orderId = 1L;
-        String correlationId = "test-correlation-id";
         String errorMessage = "Database error";
 
         when(databaseClient.sql(anyString())).thenReturn(executeSpec);
@@ -422,11 +396,11 @@ class OrderServiceUnitTest {
         when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException(errorMessage)));
         when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
-        Mono<Order> result = orderService.createOrder(orderId, correlationId);
+        Mono<Order> result = orderService.createOrder(TEST_ORDER_ID, TEST_CORRELATION_ID);
 
         StepVerifier.create(result)
                 .expectNextMatches(order ->
-                        order.id().equals(orderId) &&
+                        order.id().equals(TEST_ORDER_ID) &&
                                 order.status().equals("failed") &&
                                 order.correlationId().equals("unknown"))
                 .verifyComplete();
@@ -443,9 +417,7 @@ class OrderServiceUnitTest {
     @ParameterizedTest
     @ValueSource(strings = {"", " "})
     void shouldFailToCreateOrderWithInvalidCorrelationId(String correlationId) {
-        Long orderId = 1L;
-
-        Mono<Order> result = orderService.createOrder(orderId, correlationId);
+        Mono<Order> result = orderService.createOrder(TEST_ORDER_ID, correlationId);
 
         StepVerifier.create(result)
                 .expectErrorMatches(throwable ->
@@ -462,9 +434,7 @@ class OrderServiceUnitTest {
     @ParameterizedTest
     @ValueSource(longs = {0, -1})
     void shouldFailToCreateOrderWithInvalidOrderId(Long orderId) {
-        String correlationId = "test-correlation-id";
-
-        Mono<Order> result = orderService.createOrder(orderId, correlationId);
+        Mono<Order> result = orderService.createOrder(orderId, TEST_CORRELATION_ID);
 
         StepVerifier.create(result)
                 .expectErrorMatches(throwable ->
@@ -478,7 +448,7 @@ class OrderServiceUnitTest {
     @SuppressWarnings("unchecked")
     @Test
     void shouldHandleRedisSuccessAfterRetries() {
-        OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
+        OrderEvent event = new OrderCreatedEvent(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, "pending");
 
         reset(streamOps);
         when(streamOps.add(anyString(), anyMap()))
@@ -502,7 +472,7 @@ class OrderServiceUnitTest {
 
     @Test
     void shouldHandleMeterRegistryFailureDuringEventPublishing() {
-        OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
+        OrderEvent event = new OrderCreatedEvent(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, "pending");
 
         when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
         when(meterRegistry.counter("event.publish.redis.success")).thenThrow(new RuntimeException("Metrics failure"));
@@ -517,13 +487,8 @@ class OrderServiceUnitTest {
 
     @Test
     void shouldHandleMeterRegistryFailureDuringSagaStep() {
-        Long orderId = 1L;
-        String correlationId = "corr-id";
-        String eventId = UUID.randomUUID().toString();
-        int quantity = 10;
-
-        SagaStep step = createSagaStep(orderId, correlationId, eventId, quantity);
-        when(inventoryService.reserveStock(orderId, quantity)).thenReturn(Mono.empty());
+        SagaStep step = createSagaStep(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, TEST_QUANTITY);
+        when(inventoryService.reserveStock(TEST_ORDER_ID, TEST_QUANTITY)).thenReturn(Mono.empty());
         when(meterRegistry.counter(eq("saga_step_success"), anyString(), anyString()))
                 .thenThrow(new RuntimeException("Metrics failure"));
         when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
@@ -533,14 +498,13 @@ class OrderServiceUnitTest {
         StepVerifier.create(result)
                 .expectNextMatches(event ->
                         event.getType().equals(OrderEventType.STOCK_RESERVED) &&
-                                event.getOrderId().equals(orderId))
+                                event.getOrderId().equals(TEST_ORDER_ID))
                 .verifyComplete();
 
-        verify(inventoryService).reserveStock(orderId, quantity);
+        verify(inventoryService).reserveStock(TEST_ORDER_ID, TEST_QUANTITY);
         verify(streamOps).add(eq("orders"), anyMap());
         verify(timerSample).stop(sagaTimer);
     }
-
 
     private SagaStep createSagaStep(Long orderId, String correlationId, String eventId, int quantity) {
         return SagaStep.builder()
@@ -557,10 +521,6 @@ class OrderServiceUnitTest {
 
     @Test
     void shouldHandleConcurrentDatabaseAndRedisFailure() {
-        Long orderId = 1L;
-        int quantity = 10;
-        double amount = 100.0;
-
         when(databaseClient.sql(anyString())).thenReturn(executeSpec);
         when(executeSpec.bind(anyString(), any())).thenReturn(bindSpec);
         when(bindSpec.then()).thenReturn(Mono.error(new RuntimeException("Database failure")));
@@ -568,11 +528,11 @@ class OrderServiceUnitTest {
         when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.error(new RuntimeException("Redis failure")));
         when(redisTemplate.opsForList().leftPush(eq("failed-outbox-events"), any())).thenReturn(Mono.just(1L));
 
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result)
                 .expectNextMatches(order ->
-                        order.id().equals(orderId) &&
+                        order.id().equals(TEST_ORDER_ID) &&
                                 order.status().equals("failed") &&
                                 order.correlationId().equals("unknown"))
                 .verifyComplete();
@@ -612,19 +572,16 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldHandleMeterRegistryFailureDuringOrderCreation() {
-        Long orderId = 1L;
-        String correlationId = "test-correlation-id";
-
         when(meterRegistry.counter("orders_success")).thenThrow(new RuntimeException("Metrics failure"));
         when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
-        Mono<Order> result = orderService.createOrder(orderId, correlationId);
+        Mono<Order> result = orderService.createOrder(TEST_ORDER_ID, TEST_CORRELATION_ID);
 
         StepVerifier.create(result)
                 .expectNextMatches(order ->
-                        order.id().equals(orderId) &&
+                        order.id().equals(TEST_ORDER_ID) &&
                                 order.status().equals("pending") &&
-                                order.correlationId().equals(correlationId))
+                                order.correlationId().equals(TEST_CORRELATION_ID))
                 .verifyComplete();
 
         verify(databaseClient).sql(anyString());
@@ -637,7 +594,7 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldPublishOrderCreatedEventSuccessfully() {
-        OrderEvent event = new OrderCreatedEvent(1L, "corr-id", "event-id", "pending");
+        OrderEvent event = new OrderCreatedEvent(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, "pending");
 
         when(streamOps.add(anyString(), anyMap())).thenReturn(Mono.just(RecordId.of("record-id")));
 
@@ -649,9 +606,9 @@ class OrderServiceUnitTest {
         verify(streamOps).add(eq("orders"), eventMapCaptor.capture());
         Map<String, Object> capturedEvent = eventMapCaptor.getValue();
         assertEquals("OrderCreated", capturedEvent.get("type"));
-        assertEquals(1L, capturedEvent.get("orderId"));
-        assertEquals("corr-id", capturedEvent.get("correlationId"));
-        assertEquals("event-id", capturedEvent.get("eventId"));
+        assertEquals(TEST_ORDER_ID, capturedEvent.get("orderId"));
+        assertEquals(TEST_CORRELATION_ID, capturedEvent.get("correlationId"));
+        assertEquals(TEST_EVENT_ID.toString(), capturedEvent.get("eventId"));
         assertTrue(capturedEvent.get("payload").toString().contains("pending"));
 
         verify(redisSuccessCounter).increment();

@@ -16,6 +16,8 @@ import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
+
+import java.util.Random;
 import java.util.UUID;
 
 @Component
@@ -29,18 +31,19 @@ public class SagaOrchestrator {
     private final CompensationManager compensationManager;
     private final TransactionalOperator transactionalOperator;
     private final MeterRegistry meterRegistry;
+    private final IdGenerator idGenerator;
 
-    public Mono<Order> executeOrderSaga(Long orderId, int quantity, double amount, String correlationId) {
+    public Mono<Order> executeOrderSaga(Long orderId, int quantity, String eventId, double amount, String correlationId) {
         return createOrder(orderId, correlationId)
                 .flatMap(order -> executeStep(SagaStep.builder()
                         .name("reserveStock")
                         .topic(EventTopics.STOCK_RESERVED.getTopic())
                         .action(() -> inventoryService.reserveStock(orderId, quantity))
                         .compensation(() -> inventoryService.releaseStock(orderId, quantity))
-                        .successEvent(eventId -> new StockReservedEvent(orderId, correlationId, eventId, quantity))
+                        .successEvent(eventsuccesId -> new StockReservedEvent(orderId, correlationId, eventId, quantity))
                         .orderId(orderId)
                         .correlationId(correlationId)
-                        .eventId(UUID.randomUUID().toString())
+                        .eventId(eventId)
                         .build()))
                 .flatMap(event -> databaseClient.sql("UPDATE orders SET status = :status WHERE id = :id")
                         .bind("status", "completed")
@@ -67,7 +70,11 @@ public class SagaOrchestrator {
                     log.error("Step {} failed for order {}: {}", step.getName(), step.getOrderId(), e.getMessage(), e);
                     meterRegistry.counter("saga_step_failed", "step", step.getName()).increment();
                     OrderFailedEvent failedEvent = new OrderFailedEvent(
-                            step.getOrderId(), step.getCorrelationId(), UUID.randomUUID().toString(), step.getName(), e.getMessage());
+                            step.getOrderId(),
+                            step.getCorrelationId(),
+                            step.getEventId(),
+                            step.getName(),
+                            e.getMessage());
                     return publishFailedEvent(failedEvent)
                             .then(compensationManager.executeCompensation(step)
                                     .then(Mono.error(e)));
@@ -75,9 +82,11 @@ public class SagaOrchestrator {
     }
 
     Mono<Order> createOrder(Long orderId, String correlationId) {
-        String eventId = UUID.randomUUID().toString();
+
+        String eventId = idGenerator.generateEventId();
+
         OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, "pending");
-        log.info("Creating order {} with correlationId {}", orderId, correlationId);
+        log.info("Creating order {} with correlationId {} and eventId {}", orderId, correlationId,eventId);
         Mono<Order> orderMono = databaseClient.sql("INSERT INTO orders (id, status, correlation_id) VALUES (:id, :status, :correlationId)")
                 .bind("id", orderId)
                 .bind("status", "pending")
@@ -107,7 +116,7 @@ public class SagaOrchestrator {
                 .onErrorResume(e -> {
                     log.error("Transactional error in createOrder for order {}: {}", orderId, e.getMessage(), e);
                     OrderFailedEvent failedEvent = new OrderFailedEvent(
-                            orderId, correlationId, UUID.randomUUID().toString(), "createOrder", e.getMessage());
+                            orderId, correlationId, eventId, "createOrder", e.getMessage());
                     return publishFailedEvent(failedEvent)
                             .then(Mono.just(new Order(orderId, "failed", correlationId)));
                 });

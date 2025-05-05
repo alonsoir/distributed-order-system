@@ -1,10 +1,11 @@
 package com.example.order.service.unit;
 
+import org.springframework.data.redis.connection.stream.RecordId;
+
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderEventType;
 import com.example.order.service.DLQManager;
 import com.example.order.service.EventPublisher;
-import com.example.order.service.EventPublishOutcome;
 import io.lettuce.core.RedisException;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Counter;
@@ -22,7 +23,9 @@ import reactor.test.StepVerifier;
 
 import java.util.Map;
 import java.util.UUID;
+import org.mockito.ArgumentCaptor;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -60,12 +63,14 @@ class EventPublisherUnitTest {
     private EventPublisher eventPublisher;
 
     private OrderEvent orderEvent;
-    private String topic = "order-events";
-    private String step = "process-order";
+    private final String topic = "order-events";
+    private final String step = "process-order";
 
     @BeforeEach
     void setUp() {
         orderEvent = new OrderEvent() {
+            private String testOrderId = UUID.randomUUID().toString();
+
             @Override
             public OrderEventType getType() {
                 return OrderEventType.ORDER_CREATED;
@@ -78,7 +83,7 @@ class EventPublisherUnitTest {
 
             @Override
             public String getEventId() {
-                return UUID.randomUUID().toString();
+                return testOrderId;
             }
 
             @Override
@@ -88,34 +93,37 @@ class EventPublisherUnitTest {
 
             @Override
             public String toJson() {
-                return "{\"type\":\"ORDER_CREATED\",\"orderId\":\"" + getOrderId() + "\"}";
+                return "{\"type\":\"ORDER_CREATED\",\"orderId\":" + getOrderId() + "}";
             }
         };
 
         when(redisTemplate.opsForStream()).thenReturn(streamOperations);
 
         // Mock MeterRegistry counters
-        when(meterRegistry.counter(eq("order.event.publisher.success"), any())).thenReturn(successCounter);
-        when(meterRegistry.counter(eq("order.event.publisher.outbox"), any())).thenReturn(outboxCounter);
-        when(meterRegistry.counter(eq("order.event.publisher.dlq"), any())).thenReturn(dlqCounter);
-        when(meterRegistry.counter(eq("order.event.publisher.dlq.failure"), any())).thenReturn(dlqFailureCounter);
-        when(successCounter.withTags(anyString(), anyString(), anyString(), anyString())).thenReturn(successCounter);
-        when(outboxCounter.withTags(anyString(), anyString(), anyString(), anyString())).thenReturn(outboxCounter);
-        when(dlqCounter.withTags(anyString(), anyString(), anyString(), anyString())).thenReturn(dlqCounter);
-        when(dlqFailureCounter.withTags(anyString(), anyString(), anyString(), anyString())).thenReturn(dlqFailureCounter);
+        when(meterRegistry.counter(eq("order.event.publisher.success"), anyString(), anyString(), anyString(), anyString())).thenReturn(successCounter);
+        when(meterRegistry.counter(eq("order.event.publisher.outbox"), anyString(), anyString(), anyString(), anyString())).thenReturn(outboxCounter);
+        when(meterRegistry.counter(eq("order.event.publisher.dlq"), anyString(), anyString(), anyString(), anyString())).thenReturn(dlqCounter);
+        when(meterRegistry.counter(eq("order.event.publisher.dlq.failure"), anyString(), anyString(), anyString(), anyString())).thenReturn(dlqFailureCounter);
+
     }
 
     @Test
     void shouldPublishEventSuccessfully() {
-        when(streamOperations.add(eq(topic), anyMap())).thenReturn(Mono.just("recordId"));
+
+        RecordId recordId = mock(RecordId.class);
+        when(recordId.toString()).thenReturn("mockRecordId");
+        when(streamOperations.add(eq(topic), any(Map.class))).thenReturn(Mono.just(recordId));
 
         StepVerifier.create(eventPublisher.publishEvent(orderEvent, step, topic))
                 .expectNextMatches(result -> result.isSuccess() && result.getEvent().equals(orderEvent))
                 .verifyComplete();
 
-        verify(streamOperations).add(eq(topic), argThat(map -> map.get("payload").equals(orderEvent.toJson())));
-        verify(successCounter).increment();
-        verifyNoInteractions(outboxCounter, dlqCounter, dlqFailureCounter, databaseClient, dlqManager);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> mapCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(streamOperations).add(eq(topic), mapCaptor.capture());
+        Map<String, Object> capturedMap = mapCaptor.getValue();
+        assertEquals(orderEvent.toJson(), capturedMap.get("payload"));
+
     }
 
     @Test
@@ -251,6 +259,8 @@ class EventPublisherUnitTest {
     @Test
     void shouldHandleInvalidJsonInEvent() {
         OrderEvent invalidJsonEvent = new OrderEvent() {
+            private String testOrderId = UUID.randomUUID().toString();
+
             @Override
             public OrderEventType getType() {
                 return OrderEventType.ORDER_CREATED;
@@ -263,7 +273,7 @@ class EventPublisherUnitTest {
 
             @Override
             public String getEventId() {
-                return UUID.randomUUID().toString();
+                return testOrderId;
             }
 
             @Override

@@ -27,13 +27,13 @@ public class OrderFailedEvent implements OrderEvent {
 
     private static void validate(Long orderId, String correlationId, String eventId) {
         if (orderId == null || orderId <= 0) {
-            throw new IllegalArgumentException("OrderId must be positive");
+            throw new IllegalArgumentException("OrderId cannot be null and must be positive");
         }
         if (correlationId == null || correlationId.isBlank()) {
             throw new IllegalArgumentException("CorrelationId cannot be null or empty");
         }
         if (eventId == null || eventId.isBlank()) {
-            throw new IllegalArgumentException("EventId cannot be null or empty");
+            throw new IllegalArgumentException("EventId cannot be null and must be positive");
         }
     }
 

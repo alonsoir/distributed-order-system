@@ -1,6 +1,7 @@
 package com.example.order.controller;
 
 import com.example.order.domain.Order;
+import com.example.order.service.IdGenerator;
 import com.example.order.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,11 +15,12 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 public class OrderController {
     private final OrderService orderService;
-
-    record OrderRequest(Long orderId, int quantity, double amount) {}
+    private final IdGenerator idGenerator;
+    record OrderRequest(String externalReference, int quantity, double amount) {}
 
     @PostMapping
     public Mono<Order> createOrder(@RequestBody OrderRequest request) {
-        return orderService.processOrder(request.orderId(), request.quantity(), request.amount());
+        Long orderId = idGenerator.generateOrderId();
+        return orderService.processOrder(orderId, request.externalReference(),request.quantity(), request.amount());
     }
 }

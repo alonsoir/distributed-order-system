@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
+import java.util.Random;
 import java.util.UUID;
 
 @Service
@@ -25,12 +26,16 @@ public class OrderServiceImpl implements OrderService {
     private final SagaOrchestrator sagaOrchestrator;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final MeterRegistry meterRegistry;
+    private final IdGenerator idGenerator;
 
     @Override
-    public Mono<Order> processOrder(Long orderId, int quantity, double amount) {
-        String correlationId = UUID.randomUUID().toString();
-        String eventId = UUID.randomUUID().toString(); // NUEVO: generar eventId
-        log.info("Starting order {} with correlationId {}", orderId, correlationId);
+    public Mono<Order> processOrder(Long orderId, String externalReference,int quantity, double amount) {
+
+        String correlationId = idGenerator.generateCorrelationId();
+
+        String eventId = idGenerator.generateEventId();
+        log.info("Starting order {} with correlationId {} eventId {} quantity {} amount {}",
+                orderId, correlationId, eventId, quantity, amount);
 
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("orderProcessing");
 
@@ -39,7 +44,7 @@ public class OrderServiceImpl implements OrderService {
             return onTimeout(orderId, correlationId, eventId, "processOrder", "circuit_breaker_open");
         }
 
-        Mono<Order> orderMono = sagaOrchestrator.executeOrderSaga(orderId, quantity, amount, correlationId)
+        Mono<Order> orderMono = sagaOrchestrator.executeOrderSaga(orderId, quantity, eventId, amount, correlationId)
                 .timeout(Duration.ofSeconds(15))
                 .doOnError(e -> log.error("Timeout or error in order saga for order {}: {}", orderId, e.getMessage()))
                 .onErrorResume(e -> onTimeout(orderId, correlationId, eventId, "processOrder", "global_timeout")); // actualizado
