@@ -33,7 +33,8 @@ public class SagaOrchestrator {
     private final MeterRegistry meterRegistry;
     private final IdGenerator idGenerator;
 
-    public Mono<Order> executeOrderSaga(Long orderId, int quantity, String eventId, double amount, String correlationId) {
+    public Mono<Order> executeOrderSaga(int quantity, String eventId, double amount, String correlationId) {
+        Long orderId = idGenerator.generateOrderId();
         return createOrder(orderId, correlationId)
                 .flatMap(order -> executeStep(SagaStep.builder()
                         .name("reserveStock")

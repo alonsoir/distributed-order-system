@@ -48,8 +48,8 @@ public class DLQManagerImpl implements DLQManager {
     private final RedisStatusChecker redisStatusChecker;
     private final EventLogger eventLogger;
     private final DLQConfig dlqConfig;
-    private final Set<Long> processedEvents = ConcurrentHashMap.newKeySet();
-    private final Map<Long, Long> eventTimestamps = new ConcurrentHashMap<>();
+    private final Set<String> processedEvents = ConcurrentHashMap.newKeySet();
+    private final Map<String, Long> eventTimestamps = new ConcurrentHashMap<>();
 
     /**
      * Configuration properties for DLQ processing.
@@ -210,7 +210,7 @@ public class DLQManagerImpl implements DLQManager {
     private void processLogFile(Path file) {
         try {
             Map<String, Object> logEntry = objectMapper.readValue(file.toFile(), Map.class);
-            Long eventId = (Long) logEntry.get("eventId");
+            String eventId = (String) logEntry.get("eventId");
             if (processedEvents.contains(eventId)) {
                 log.info("Skipping duplicate log event {}", eventId);
                 return;
@@ -279,7 +279,7 @@ public class DLQManagerImpl implements DLQManager {
      *
      * @param eventId the event ID
      */
-    private void addProcessedEvent(Long eventId) {
+    private void addProcessedEvent(String eventId) {
         if (eventId == null) {
             return;
         }
@@ -308,7 +308,7 @@ public class DLQManagerImpl implements DLQManager {
      * @param file    the file to delete
      * @param eventId the associated event ID
      */
-    private void deleteLogFile(Path file, Long eventId) {
+    private void deleteLogFile(Path file, String eventId) {
         Mono.fromRunnable(() -> {
             try {
                 Files.delete(file);

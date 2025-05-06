@@ -4,10 +4,7 @@ import com.example.order.events.EventTopics;
 import com.example.order.domain.Order;
 import com.example.order.events.*;
 import com.example.order.model.SagaStep;
-import com.example.order.service.InventoryService;
-import com.example.order.service.OrderService;
-import com.example.order.service.OrderServiceImpl;
-import com.example.order.service.SagaOrchestrator;
+import com.example.order.service.*;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.Counter;
@@ -130,6 +127,9 @@ class OrderServiceUnitTest {
 
     private AutoCloseable closeable;
 
+    @Mock
+    private IdGenerator idGenerator;
+
     /**
      * Sets up mocks and common configurations before each test.
      */
@@ -201,11 +201,14 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldPersistOrderSuccessfully() {
+        String externalReference = idGenerator.generateExternalReference();
+        // esto no puede funcionar en la vida porque el orderId se genera en el servicio. No se debe generar en el
+        // controller.
         Order order = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
 
         when(sagaOrchestrator.executeOrderSaga(TEST_ORDER_ID, TEST_QUANTITY, TEST_EVENT_ID, TEST_AMOUNT, TEST_CORRELATION_ID)).thenReturn(Mono.just(order));
 
-        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
+        Mono<Order> result = orderService.processOrder(externalReference, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result)
                 .expectNextMatches(o -> o.id().equals(TEST_ORDER_ID) && o.status().equals("completed"))
@@ -219,19 +222,20 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldPublishEventsDuringOrderProcessing() {
+        String externalReference = idGenerator.generateExternalReference();
         Order order = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
-
-        when(sagaOrchestrator.executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyLong(), eq(TEST_AMOUNT), eq(TEST_CORRELATION_ID)))
+        // Mono<Order> executeOrderSaga(Long orderId, int quantity, String eventId, double amount, String correlationId)
+        when(sagaOrchestrator.executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyString(), eq(TEST_AMOUNT), eq(TEST_CORRELATION_ID)))
                 .thenReturn(Mono.just(order));
         when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
 
-        Mono<Order> result = orderService.processOrder(TEST_ORDER_ID, TEST_QUANTITY, TEST_AMOUNT);
+        Mono<Order> result = orderService.processOrder(externalReference, TEST_QUANTITY, TEST_AMOUNT);
 
         StepVerifier.create(result).expectNextCount(1).verifyComplete();
 
         // Verificamos que se llamó al método executeOrderSaga con los parámetros correctos
         // Usamos anyLong() para el eventId porque podría generarse en el método processOrder
-        verify(sagaOrchestrator).executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyLong(),
+        verify(sagaOrchestrator).executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyString(),
                 eq(TEST_AMOUNT), anyString());
     }
 
@@ -240,6 +244,9 @@ class OrderServiceUnitTest {
      */
     @Test
     void shouldUpdateMetricsDuringOrderProcessing() {
+        String externalReference = idGenerator.generateExternalReference();
+        // Estan todos mal, el objeto order lo devuelve el sagaOrchestrator, con el orderId que se genera en el
+        // processOrder, pero viendo el código, el orderId se debería generar en el sagaOrchestrator.
         Order order = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
 
         when(sagaOrchestrator.executeOrderSaga(eq(TEST_ORDER_ID), eq(TEST_QUANTITY), anyLong(), eq(TEST_AMOUNT), anyString()))

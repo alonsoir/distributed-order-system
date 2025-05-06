@@ -71,7 +71,7 @@ class CircuitBreakerUnitTest {
         when(circuitBreaker.tryAcquirePermission()).thenReturn(false);
         when(sagaOrchestrator.publishFailedEvent(any(OrderFailedEvent.class))).thenReturn(Mono.empty());
         String externalReference = idGenerator.generateExternalReference();
-        Mono<Order> result = orderService.processOrder(orderId, externalReference, quantity, amount);
+        Mono<Order> result = orderService.processOrder(externalReference, quantity, amount);
 
         StepVerifier.create(result)
                 .expectNextMatches(order -> order.status().equals("failed") && order.id().equals(orderId))
@@ -79,7 +79,7 @@ class CircuitBreakerUnitTest {
 
         verify(circuitBreaker).tryAcquirePermission(); // Solo una vez
         verify(sagaOrchestrator).publishFailedEvent(any(OrderFailedEvent.class));
-        verify(sagaOrchestrator, never()).executeOrderSaga(anyLong(), anyInt(), anyLong(), anyDouble(), anyString());
+        verify(sagaOrchestrator, never()).executeOrderSaga(anyLong(), anyInt(), anyString(), anyDouble(), anyString());
     }
 
     @Test
@@ -88,23 +88,25 @@ class CircuitBreakerUnitTest {
         int quantity = 10;
         double amount = 100.0;
         String correlationId = "test-correlation-id";
+        String externalReference = idGenerator.generateExternalReference();
         Long eventId = 1L;
         Order order = new Order(orderId, "completed", correlationId);
 
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
-        when(sagaOrchestrator.executeOrderSaga(eq(orderId), eq(quantity), anyLong(), eq(amount), anyString()))
+        when(sagaOrchestrator.executeOrderSaga(eq(orderId), eq(quantity), anyString(), eq(amount), anyString()))
                 .thenReturn(Mono.just(order));
         when(meterRegistry.counter("orders_success")).thenReturn(mock(Counter.class));
-
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        //    public Mono<Order> processOrder(Long orderId, String externalReference,int quantity, double amount) {
+        // en realidad, este método processOrder no se debería llamar aquí, porque es un método exclusivo del Controller.
+        Mono<Order> result = orderService.processOrder(externalReference, quantity, amount);
 
         StepVerifier.create(result)
                 .expectNextMatches(o -> o.id().equals(orderId) && o.status().equals("completed"))
                 .verifyComplete();
 
         verify(circuitBreaker, times(2)).tryAcquirePermission(); // Dos veces
-        verify(sagaOrchestrator).executeOrderSaga(eq(orderId), eq(quantity), anyLong(), eq(amount), anyString());
+        verify(sagaOrchestrator).executeOrderSaga(eq(orderId), eq(quantity), anyString(), eq(amount), anyString());
         verify(meterRegistry).counter("orders_success");
     }
 
@@ -115,14 +117,15 @@ class CircuitBreakerUnitTest {
         Long orderId = 2L;
         int quantity = 5;
         double amount = 50.0;
-        Long eventId = 2L;
+        String eventId = "test-event-id";
+        String externalReference = idGenerator.generateExternalReference();
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
         when(sagaOrchestrator.executeOrderSaga(eq(orderId), eq(quantity), eq(eventId),eq(amount), anyString()))
                 .thenReturn(Mono.error(new RuntimeException("Saga failed")));
         when(sagaOrchestrator.publishFailedEvent(any())).thenReturn(Mono.empty());
-
-        Mono<Order> result = orderService.processOrder(orderId, quantity, amount);
+        //    public Mono<Order> processOrder(Long orderId, String externalReference,int quantity, double amount) {
+        Mono<Order> result = orderService.processOrder(externalReference, quantity, amount);
 
         StepVerifier.create(result)
                 .expectNextMatches(order -> order.status().equals("failed") && order.id().equals(orderId))

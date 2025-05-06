@@ -29,22 +29,22 @@ public class OrderServiceImpl implements OrderService {
     private final IdGenerator idGenerator;
 
     @Override
-    public Mono<Order> processOrder(Long orderId, String externalReference,int quantity, double amount) {
+    public Mono<Order> processOrder(String externalReference,int quantity, double amount) {
 
         String correlationId = idGenerator.generateCorrelationId();
 
         String eventId = idGenerator.generateEventId();
-        log.info("Starting order {} with correlationId {} eventId {} quantity {} amount {}",
-                orderId, correlationId, eventId, quantity, amount);
+        log.info("Starting order with correlationId {} eventId {} quantity {} amount {}",
+                 correlationId, eventId, quantity, amount);
 
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("orderProcessing");
 
         if (!circuitBreaker.tryAcquirePermission()) {
-            log.warn("Circuit breaker open for order {}", orderId);
-            return onTimeout(orderId, correlationId, eventId, "processOrder", "circuit_breaker_open");
+            log.warn("Circuit breaker open for order with eventId", eventId);
+            return onTimeout(correlationId, eventId, "processOrder", "circuit_breaker_open");
         }
 
-        Mono<Order> orderMono = sagaOrchestrator.executeOrderSaga(orderId, quantity, eventId, amount, correlationId)
+        Mono<Order> orderMono = sagaOrchestrator.executeOrderSaga(quantity, eventId, amount, correlationId)
                 .timeout(Duration.ofSeconds(15))
                 .doOnError(e -> log.error("Timeout or error in order saga for order {}: {}", orderId, e.getMessage()))
                 .onErrorResume(e -> onTimeout(orderId, correlationId, eventId, "processOrder", "global_timeout")); // actualizado
@@ -78,9 +78,9 @@ public class OrderServiceImpl implements OrderService {
         return sagaOrchestrator.executeStep(step);
     }
 
-    private Mono<Order> onTimeout(Long orderId, String correlationId, String eventId,String step,String reason) {
-        log.warn("Returning fallback order for {} with reason: {}", orderId, reason);
-        OrderFailedEvent event = new OrderFailedEvent(orderId, correlationId, eventId,step,reason);
+    private Mono<Order> onTimeout(String correlationId, String eventId,String step,String reason) {
+        log.warn("Returning fallback order with correlationId {} with reason: {}", correlationId, reason);
+        OrderFailedEvent event = new OrderFailedEvent(correlationId, eventId,step,reason);
         return sagaOrchestrator.publishFailedEvent(event)
                 .then(Mono.fromCallable(() -> {
                     Order orderFallBack = fallbackOrder(orderId);

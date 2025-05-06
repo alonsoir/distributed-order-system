@@ -10,7 +10,7 @@ public class OrderFailedEvent implements OrderEvent {
     private final String step;
     private final String reason;
 
-    public OrderFailedEvent(Long orderId, String correlationId, String eventId, String step, String reason) {
+    public OrderFailedEvent(String correlationId, String eventId, String step, String reason) {
         validate(orderId, correlationId, eventId);
         if (step == null || step.isBlank()) {
             throw new IllegalArgumentException("Step cannot be null or empty");

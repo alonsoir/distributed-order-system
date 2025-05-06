@@ -15,12 +15,10 @@ import reactor.core.publisher.Mono;
 @RequiredArgsConstructor
 public class OrderController {
     private final OrderService orderService;
-    private final IdGenerator idGenerator;
     record OrderRequest(String externalReference, int quantity, double amount) {}
 
     @PostMapping
     public Mono<Order> createOrder(@RequestBody OrderRequest request) {
-        Long orderId = idGenerator.generateOrderId();
-        return orderService.processOrder(orderId, request.externalReference(),request.quantity(), request.amount());
+        return orderService.processOrder(request.externalReference(),request.quantity(), request.amount());
     }
 }
