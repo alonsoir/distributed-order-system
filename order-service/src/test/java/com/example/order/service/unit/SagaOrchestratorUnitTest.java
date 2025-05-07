@@ -1,6 +1,6 @@
 package com.example.order.service.unit;
 
-import com.example.order.service.CompensationManager;
+import com.example.order.service.CompensationManagerImpl;
 import com.example.order.service.EventPublisher;
 import com.example.order.service.InventoryService;
 import com.example.order.service.SagaOrchestratorImpl;
@@ -25,7 +25,7 @@ class SagaOrchestratorUnitTest {
     @Mock
     private EventPublisher eventPublisher;
     @Mock
-    private CompensationManager compensationManager;
+    private CompensationManagerImpl compensationManager;
     @Mock
     private TransactionalOperator transactionalOperator;
     @Mock

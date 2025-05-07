@@ -1,398 +1,195 @@
-# Order Processing Service / Servicio de Procesamiento de Órdenes
-
-## English
-
-### Overview
-The **Order Processing Service** is a robust, reactive microservice designed to handle order creation and processing using a saga pattern. Built with Spring WebFlux, R2DBC, and Redis, it ensures reliable, fault-tolerant, and scalable order management. The service is engineered to address both logical (e.g., validation, consistency) and physical (e.g., network failures, database issues) challenges, aiming to deliver a production-ready, state-of-the-art solution.
-
-This project is a reference implementation for distributed systems, showcasing best practices in reactive programming, error handling, monitoring, and testing. It is designed to be maintainable, extensible, and easy to understand for engineers joining the project.
-
-### Goals
-- **Robustness**: Handle hardware failures (e.g., Redis or database outages) and logical errors (e.g., invalid inputs) gracefully using circuit breakers, retries, and compensations.
-- **Single Responsibility Principle (SRP)**: Ensure classes and methods have clear, focused responsibilities through modular design and upcoming refactoring.
-- **Testability**: Achieve comprehensive test coverage with unit, integration, and end-to-end tests to validate all scenarios, including failure cases.
-- **Scalability**: Prepare the system for high concurrency and future enhancements, such as stored procedures for database interactions.
-- **State-of-the-Art Code**: Deliver a solution that serves as a gold standard for other engineers, addressing real-world challenges with clarity and elegance.
-
-### Features
-- **Saga Pattern**: Orchestrates order creation and stock reservation as a distributed transaction, ensuring consistency across services.
-- **Event-Driven Architecture**: Publishes events to Redis streams for asynchronous processing, with fallback to an outbox table in case of Redis failures.
-- **Fault Tolerance**:
-    - Circuit breakers for external service calls (e.g., Redis, inventory service).
-    - Retries for transient failures in Redis and outbox persistence.
-    - Compensations for failed saga steps (e.g., releasing reserved stock).
-- **Monitoring**: Tracks success/failure metrics and latency using Micrometer.
-- **Transactional Integrity**: Uses Spring's `TransactionalOperator` for atomic database operations.
-- **Validation**: Enforces strict input validation to prevent invalid states.
-
-### Project Structure
-- **Source Code**:
-    - `src/main/java/com/example/order/service/OrderService.java`: Core service implementing the saga pattern, event publishing, and error handling.
-    - `src/main/java/com/example/order/domain/Order.java`: Domain model for orders.
-- **Tests**:
-    - `src/test/java/com/example/order/service/OrderServiceUnitTest.java`: Unit tests covering happy paths, failure scenarios, and validations.
-    - (Planned) Integration tests using Testcontainers for MySQL and Redis.
-    - (Planned) End-to-end tests simulating real-world failures (e.g., Redis outage, network timeouts).
-- **Database Schema**:
-    - `schema.sql`: Defines tables for orders, outbox, and processed events.
-
-### Current Status
-- **Unit Tests**: Comprehensive unit tests are implemented, covering:
-    - Successful order processing.
-    - Failure scenarios (e.g., circuit breaker open, Redis failure, compensation failures).
-    - Input validations (e.g., invalid order IDs, null event types).
-      - Ongoing: Adding more validation tests and edge cases.
-        - **Code Corrections**: Recent fixes addressed compilation issues in `OrderEvent` records and `SagaStep` constructor.
-          - **Next Steps**:
-              1. Validate unit tests to ensure all are passing.
-              2. Add more unit tests for edge cases and validations.
-              3. Refactor `OrderService` to adhere to SRP, introducing:
-                  - `AbstractOrderSaga` for saga orchestration.
-                  - `EventPublisher` for event publishing.
-                  - `OrderRepository` for database operations.
-              4. Implement integration tests with Testcontainers.
-              5. Develop end-to-end tests for real-world failure scenarios.
-              6. Introduce stored procedures for database operations as the final step.
-              7. Tag the polished version as `0.0.1-RELEASE`.
-      
-          - ## Testing status
-  
-          BaseIntegrationTest.java is abstract, candidate to eliminate.
-          SimpleTest.java is GREEN.
-          SimpleTestcontainersTest.java is GREEN.
-          CircuitBreakerUnitTest.java is GREEN. shouldReturnFailedOrderWhenSagaFails is disabled.
-          InventoryServiceUnitTest is GREEN.        
-          RedisUnitTest is GREEN.
-          DatabaseClientIntegrationTest.java is GREEN.  
-
-          ## TODO: Hay que revisarlo, ahora no les veo lógica
-        
-          OrderServiceIntegrationTest is RED. 
-          OrderServiceUnitTest is RED.
-          SagaOrchestratorUnitTest is RED.
-          EventPublisherUnitTest is RED. Not created yet.
-          CompensationManagerUnitTest is RED. Not created yet.
-          TransactionalOperatorUnitTest is RED. Not created yet.
-          MeterRegistryUnitTest is RED. Not created yet.
-      
-          
-- **Future Improvements**:
-### How to Run
-#### Prerequisites
-- Java 17+
-- Maven 3.8+
-- MySQL 8+ (for integration tests)
-- Redis 7+ (for event streaming)
-- Docker (for Testcontainers)
-
-#### Setup
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd order-processing-service
-   
-2. Configure MySQL and Redis:
-Update application.properties with your MySQL and Redis connection details:
-properties
-```
-spring.r2dbc.url=r2dbc:mysql://localhost:3306/orders_db
-spring.r2dbc.username=root
-spring.r2dbc.password=your_password
-spring.redis.host=localhost
-spring.redis.port=6379
-```
-Alternatively, use Testcontainers for integration tests (no local setup required).
+# Order Processing Service (Sistema de Procesamiento de Órdenes)
 
-Initialize the MySQL database:
-Run the schema.sql script to create the necessary tables (orders, outbox, processed_events).
+## Overview / Descripción General
 
-First, run SonarQube, obtain a token, and configure it in the sonar-project.properties file, or
-run this command:
-### How to obtain a SonarQube token:
-```
-Descarga SonarQube:
-Ve al sitio oficial de SonarQube y descarga la edición Community (gratuita).
+The Order Processing Service is a robust, reactive microservice designed to handle order creation and processing using a saga pattern. Built with Spring WebFlux, R2DBC, and Redis, it ensures reliable, fault-tolerant, and scalable order management in distributed environments.
 
-Descomprime el archivo en una carpeta, por ejemplo, ~/sonarqube.
+El Servicio de Procesamiento de Órdenes es un microservicio reactivo y robusto diseñado para gestionar la creación y procesamiento de órdenes utilizando un patrón de saga, construido con Spring WebFlux, R2DBC y Redis para garantizar una gestión fiable, tolerante a fallos y escalable en entornos distribuidos.
 
-Configura SonarQube:
-Navega al directorio descomprimido:
+## Architecture / Arquitectura
 
-    cd ~/sonarqube
+This service implements a publisher (PUB) component of a larger PUB/SUB reactive asynchronous system. The architecture emphasizes resilience against physical failures through:
 
-Opcionalmente, edita el archivo de configuración conf/sonar.properties para personalizar puertos o ajustes (por defecto, usa el puerto 9000).
+Este servicio implementa el componente publicador (PUB) de un sistema reactivo asíncrono PUB/SUB más amplio. La arquitectura enfatiza la resiliencia ante fallos físicos mediante:
 
-Inicia SonarQube:
-Ejecuta el script correspondiente para macOS:
+- **Saga Pattern / Patrón Saga**: Orchestrates distributed transactions with compensation mechanisms / Orquesta transacciones distribuidas con mecanismos de compensación
+- **Event-Driven Design / Diseño Orientado a Eventos**: Uses Redis streams with outbox pattern as fallback / Utiliza streams de Redis con el patrón outbox como respaldo
+- **Layered Architecture / Arquitectura en Capas**:
+    - `OrderService`: High-level facade with circuit breaker patterns / Fachada de alto nivel con patrones de circuit breaker
+    - `SagaOrchestrator`: Core component managing the saga execution flow / Componente central que gestiona el flujo de ejecución de la saga
+    - `CompensationManager`: Handles compensating transactions for failed steps / Gestiona transacciones de compensación para pasos fallidos
+    - `EventPublisher`: Manages event publication with fallback mechanisms / Administra la publicación de eventos con mecanismos de respaldo
 
+## Key Features / Características Principales
 
-    ./bin/macosx-universal-64/sonar.sh start
+### Resilience / Resiliencia
+- **Circuit Breakers / Cortocircuitos**: Per-step isolation of failures / Aislamiento de fallos por paso
+- **Bulkheads / Mamparos**: Resource isolation for concurrent executions / Aislamiento de recursos para ejecuciones concurrentes
+- **Retry Mechanisms / Mecanismos de Reintento**: For transient failures with back-off strategies / Para fallos transitorios con estrategias de retroceso
+- **Compensations / Compensaciones**: Rolling back partial transactions / Reversión de transacciones parciales
+- **Event Outbox / Buzón de Eventos**: Ensures event delivery even during Redis outages / Garantiza la entrega de eventos incluso durante caídas de Redis
 
-Esto inicia el servidor SonarQube. Puede tomar unos segundos.
+### Observability / Observabilidad
+- **Enhanced Diagnostics / Diagnósticos Mejorados**: Rich context using MDC for correlated logging / Contexto enriquecido usando MDC para logging correlacionado
+- **Detailed Metrics / Métricas Detalladas**: Latency, success/failure rates, retries per operation / Latencia, tasas de éxito/fallo, reintentos por operación
+- **Granular Performance Monitoring / Monitoreo de Rendimiento Granular**: Per-step timers and counters / Temporizadores y contadores por paso
 
-Accede a SonarQube:
-Abre tu navegador y ve a http://localhost:9000.
+### Code Quality / Calidad de Código
+- **Single Responsibility Principle / Principio de Responsabilidad Única**: Each component with clear, focused responsibilities / Cada componente con responsabilidades claras y enfocadas
+- **Interface-Based Design / Diseño Basado en Interfaces**: Clean separation between contracts and implementations / Separación limpia entre contratos e implementaciones
+- **Comprehensive Testing / Pruebas Exhaustivas**: Unit and integration tests covering happy paths and failure scenarios / Pruebas unitarias y de integración que cubren escenarios exitosos y de fallo
+- **Diagnostic-First Approach / Enfoque Diagnóstico Primero**: Designed for easy troubleshooting in production / Diseñado para facilitar la solución de problemas en producción
 
-Inicia sesión con las credenciales predeterminadas:
-    Usuario: admin
-    
-    Contraseña: admin
+## Components / Componentes
 
-Cambia la contraseña cuando se te solicite.
+### Core Interfaces / Interfaces Principales
+- `OrderService`: Facade for order processing operations / Fachada para operaciones de procesamiento de órdenes
+- `SagaOrchestrator`: Manages multi-step transactional flows / Gestiona flujos transaccionales de múltiples pasos
+- `CompensationManager`: Handles failure recovery / Maneja la recuperación de fallos
+- `EventPublisher`: Reliable event delivery with fallbacks / Entrega confiable de eventos con sistemas de respaldo
 
-Para detener SonarQube:
+### Implementation Details / Detalles de Implementación
+The system follows an event-sourcing approach where:
 
-./bin/macosx-universal-64/sonar.sh stop
+El sistema sigue un enfoque de event-sourcing donde:
 
-Account/My Account/Security/Generate Token/Enter name/Enter Type/Expires is
-once create, you can use it this way:
+1. Orders are created in a pending state / Las órdenes se crean en estado pendiente
+2. A saga orchestrates necessary steps (e.g., inventory reservation) / Una saga orquesta los pasos necesarios (ej., reserva de inventario)
+3. Events are published for each step / Se publican eventos para cada paso
+4. Compensations are triggered on failures / Las compensaciones se activan en caso de fallos
+5. The state is updated accordingly (completed/failed) / El estado se actualiza en consecuencia (completado/fallido)
 
-mvn clean verify sonar:sonar -Dsonar.token=YOUR_TOKEN
-You can paste it in the sonar-project.properties file, but i dont recommend it
-if the token never expires and you are going to upload it to github.
-Your choice.
-```
+## Current Status / Estado Actual
 
+We have successfully implemented:
 
-```
-Build and run tests with sonar coverage:
-    mvn clean verify sonar:sonar -Dsonar.token=YOUR_SONAR_TOKEN
-```
-```
-Build and run tests with sonar coverage:
-    mvn clean test
-```
-```
-Run the application:
-    mvn spring-boot:run
-```
-3. Future Improvements
-Refactoring:
+Hemos implementado con éxito:
 
-1) Split OrderService into smaller, focused components to improve maintainability and testability.
+- ✅ Core domain models and interfaces / Modelos de dominio e interfaces principales
+- ✅ Saga orchestration with step execution / Orquestación de saga con ejecución por pasos
+- ✅ Compensation mechanism for failed steps / Mecanismo de compensación para pasos fallidos
+- ✅ Enhanced diagnostic context for troubleshooting / Contexto de diagnóstico mejorado para solución de problemas
+- ✅ Circuit breaker and bulkhead patterns / Patrones de circuit breaker y bulkhead
+- ✅ Event publishing with outbox pattern / Publicación de eventos con patrón outbox
+- ✅ Unit tests for core components / Pruebas unitarias para componentes principales
 
-2) Stored Procedures: Migrate database interactions to stored procedures for atomicity and performance.
+Next steps:
 
-3) Advanced Monitoring: Add distributed tracing (e.g., OpenTelemetry) for better observability.
+Próximos pasos:
 
-4) Concurrency Testing: Validate behavior under high load with tools like Gatling or JMeter.
+- 🔄 SonarQube issue resolution / Resolución de problemas identificados por SonarQube
+- 🔄 Integration tests with real Redis and MySQL / Pruebas de integración con Redis y MySQL reales
+- 🔄 Performance benchmarking and optimization / Evaluación y optimización de rendimiento
+- 🔄 Documentation improvements / Mejoras en la documentación
 
-5) Create docker images for MySQL and Redis/Kafka.
+## How to Run / Cómo Ejecutar
 
-Contributing
+### Prerequisites / Prerrequisitos
+- Java 17+ (tested with Java 21 and 23) / Java 17+ (probado con Java 21 y 23)
+- Maven 3.8+ / Maven 3.8+
+- Docker Desktop (for running containers) / Docker Desktop (para ejecutar contenedores)
+- MySQL 8+ and Redis 7+ (or use Testcontainers) / MySQL 8+ y Redis 7+ (o usar Testcontainers)
 
-We welcome contributions! Please follow these steps:
-Fork the repository.
+### Setup / Configuración
+```bash
+# Clone the repository / Clonar el repositorio
+git clone https://github.com/yourusername/distributed-order-system.git
+cd distributed-order-system
 
-Create a feature branch (git checkout -b feature/my-feature).
+# Build the project / Compilar el proyecto
+mvn clean install
 
-Commit your changes (git commit -m "Add my feature").
+# Run tests / Ejecutar pruebas
+mvn test
 
-Push to the branch (git push origin feature/my-feature).
+# Run SonarQube analysis / Ejecutar análisis de SonarQube
+mvn clean verify sonar:sonar -Dsonar.token=YOUR_SONAR_TOKEN
 
-Open a pull request.
-
-License
-This project is licensed under the MIT License. See the LICENSE file for details.
-Contact
-For questions or feedback, please contact the maintainers at your-email@example.com (mailto:your-email@example.com).
-
-### Español
-
-### Resumen
-
-El Servicio de Procesamiento de Órdenes es un microservicio reactivo y robusto diseñado para gestionar la creación y procesamiento de órdenes utilizando un patrón de saga. Construido con Spring WebFlux, R2DBC y Redis, garantiza una gestión de órdenes confiable, tolerante a fallos y escalable. El servicio está diseñado para abordar desafíos lógicos (por ejemplo, validaciones, consistencia) y físicos (por ejemplo, fallos de red, problemas de base de datos), con el objetivo de ofrecer una solución lista para producción y de vanguardia.
-Este proyecto es una implementación de referencia para sistemas distribuidos, mostrando las mejores prácticas en programación reactiva, manejo de errores, monitoreo y pruebas. Está diseñado para ser mantenible, extensible y fácil de entender para los ingenieros que se unan al proyecto.
-Objetivos
-Robustez: Manejar fallos de hardware (por ejemplo, caídas de Redis o base de datos) y errores lógicos (por ejemplo, entradas inválidas) de forma elegante usando circuit breakers, reintentos y compensaciones.
-
-Principio de Responsabilidad Única (SRP): Asegurar que las clases y métodos tengan responsabilidades claras y enfocadas mediante un diseño modular y una refactorización próxima.
-
-Testabilidad: Lograr una cobertura completa de pruebas con tests unitarios, de integración y end-to-end para validar todos los escenarios, incluyendo casos de fallo.
-
-Escalabilidad: Preparar el sistema para alta concurrencia y mejoras futuras, como procedimientos almacenados para interacciones con la base de datos.
-
-Código de Vanguardia: Entregar una solución que sirva como estándar de excelencia para otros ingenieros, abordando desafíos del mundo real con claridad y elegancia.
-
-Características
-Patrón de Saga: Orquesta la creación de órdenes y la reserva de inventario como una transacción distribuida, asegurando consistencia entre servicios.
-
-Arquitectura Basada en Eventos: Publica eventos en streams de Redis para procesamiento asíncrono, con fallback a una tabla de outbox en caso de fallos de Redis.
-
-Tolerancia a Fallos:
-Circuit breakers para llamadas a servicios externos (por ejemplo, Redis, servicio de inventario).
-
-Reintentos para fallos transitorios en Redis y persistencia en outbox.
-
-Compensaciones para pasos de saga fallidos (por ejemplo, liberación de inventario reservado).
-
-Monitoreo: Registra métricas de éxito/fallo y latencia usando Micrometer.
-
-Integridad Transaccional: Usa TransactionalOperator de Spring para operaciones atómicas en la base de datos.
-
-Validación: Aplica validaciones estrictas para prevenir estados inválidos.
-
-Estructura del Proyecto
-Código Fuente:
-```
-src/main/java/com/example/order/service/OrderService.java: Servicio principal que implementa el patrón de saga, publicación de eventos y manejo de errores.
-
-src/main/java/com/example/order/domain/Order.java: Modelo de dominio para órdenes.
-```
-Pruebas:
-```
-src/test/java/com/example/order/service/OrderServiceUnitTest.java: Tests unitarios que cubren casos exitosos, escenarios de fallo y validaciones.
-```
-(Planeado) Tests de integración usando Testcontainers para MySQL y Redis.
-
-(Planeado) Tests end-to-end que simulen fallos del mundo real (por ejemplo, caída de Redis, timeouts de red).
-
-### Esquema de Base de Datos:
-schema.sql: Define las tablas para órdenes, outbox y eventos procesados.
-
-### Estado Actual
-Tests Unitarios: Se han implementado tests unitarios completos que cubren:
-Procesamiento exitoso de órdenes.
-
-Escenarios de fallo (por ejemplo, circuit breaker abierto, fallo de Redis, compensaciones fallidas).
-
-Validaciones de entrada (por ejemplo, IDs de orden inválidos, tipos de evento nulos).
-
-En curso: Añadir más tests de validación y casos verdaderamente extremos.
-
-Correcciones de Código: Se resolvieron recientemente problemas de compilación en los records OrderEvent y el constructor de SagaStep.
-
-### Próximos Pasos:
-
-Validar los tests unitarios para asegurar que todos pasan.
-
-Añadir más tests unitarios para casos extremos y validaciones.
-
-Refactorizar OrderService para cumplir con SRP, introduciendo:
-AbstractOrderSaga para la orquestación de sagas.
-
-EventPublisher para la publicación de eventos.
-
-OrderRepository para operaciones de base de datos.
-
-Implementar tests de integración con Testcontainers.
-
-Desarrollar tests end-to-end para escenarios de fallo del mundo real.
-
-Introducir procedimientos almacenados para operaciones de base de datos como paso final.
-
-Etiquetar la versión pulida como 0.0.1-RELEASE.
-
-### Cómo Ejecutar
-Prerrequisitos
-Java 17+, aunque yo he probado con Java 21 y 23.
-
-Maven 3.8+
-
-MySQL 8+ (para tests de integración)
-
-Redis 7+ (para streaming de eventos)
-
-Docker (para Testcontainers)
-
-### Configuración
-Clona el repositorio:
-bash
-```
-git clone <url-del-repositorio>
-cd servicio-procesamiento-ordenes
-```
-### Configura MySQL y Redis:
-Actualiza application.properties con los detalles de conexión a MySQL y Redis:
-properties
-```
-spring.r2dbc.url=r2dbc:mysql://localhost:3306/orders_db
-spring.r2dbc.username=root
-spring.r2dbc.password=tu_contraseña
-spring.redis.host=localhost
-spring.redis.port=6379
-```
-
-Alternativamente, usa Testcontainers para tests de integración (no requiere configuración local).
-Yo uso Docker Desktop para levantar los contenedores. He probado a usar Finch, pero hay problemas
-con test containers actualmente.
-
-### Inicializa la base de datos MySQL:
-Ejecuta el script schema.sql para crear las tablas necesarias (orders, outbox, processed_events).
-
-Construye y ejecuta los tests:
-```
-mvn clean test
-```
-
-Ejecuta la aplicación:
-```
+# Run the application / Ejecutar la aplicación
 mvn spring-boot:run
-```
-Mejoras Futuras
-Refactorización: Dividir OrderService en componentes más pequeños y enfocados para mejorar la mantenibilidad y testabilidad.
 
-Procedimientos Almacenados: Migrar las interacciones con la base de datos a procedimientos almacenados para atomicidad y rendimiento.
+# Configuration / Configuración
+The application uses different configuration profiles:
+La aplicación utiliza diferentes perfiles de configuración:
+Main Configuration (application.yml) / Configuración Principal
+'''
+  r2dbc:
+    url: ${SPRING_R2DBC_URL:r2dbc:mysql://localhost:3306/orders}
+    username: ${SPRING_R2DBC_USERNAME:root}
+    password: ${SPRING_R2DBC_PASSWORD:root}
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+  sql:
+    init:
+      mode: ${SPRING_SQL_INIT_MODE:never}
 
-Monitoreo Avanzado: Añadir trazabilidad distribuida (por ejemplo, OpenTelemetry) para mejor observabilidad.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+'''
 
-Pruebas de Concurrencia: Validar el comportamiento bajo alta carga con herramientas como Gatling o JMeter.
+# Additional configuration for Redis, outbox, DLQ and more...
+# Configuración adicional para Redis, outbox, DLQ y más...
+Production Profile (application-prod.yml) / Perfil de Producción
+Contains optimized settings for production environments with enhanced monitoring.
+Contiene configuraciones optimizadas para entornos de producción con monitoreo mejorado.
+Test Profiles / Perfiles de Prueba
 
-### Contribuir
-¡Agradecemos las contribuciones! Sigue estos pasos:
-Haz un fork del repositorio.
+application-integration.yml: Settings for integration tests / Configuración para pruebas de integración
+application-unit.yml: Settings for unit tests with in-memory database / Configuración para pruebas unitarias con base de datos en memoria
+application-stress.yml: Configuration for stress testing / Configuración para pruebas de estrés
 
-Crea una rama para tu funcionalidad (git checkout -b feature/mi-funcionalidad).
+Activate profiles using spring.profiles.active=prod (environment variable or command line).
+Active los perfiles usando spring.profiles.active=prod (variable de entorno o línea de comandos).
+Generaré un un script para ejecutar el proyecto con los perfiles activos.
 
-Confirma tus cambios (git commit -m "Añadir mi funcionalidad").
+# Database Schema / Esquema de Base de Datos
 
-Sube la rama (git push origin feature/mi-funcionalidad).
+The service uses the following main tables:
+El servicio utiliza las siguientes tablas principales:
 
-Abre un pull request.
+    orders: Stores order data with status tracking / Almacena datos de órdenes con seguimiento de estado
+    outbox: Fallback for event publishing during Redis failures / Respaldo para publicación de eventos durante fallos de Redis
+    processed_events: Tracks processed events for idempotency / Rastrea eventos procesados para idempotencia
 
-Licencia
-Este proyecto está licenciado bajo la Licencia MIT. Consulta el archivo LICENSE para más detalles.
-Contacto
-Para preguntas o feedback, contacta a los mantenedores en alonsoir@gmail.com (mailto:alonsoir@gmail.com).
+# Development Principles / Principios de Desarrollo
 
----
+Robustness First / Robustez Primero: Design assuming hardware and network failures will occur / Diseñar asumiendo que ocurrirán fallos de hardware y red
+Diagnostic Excellence / Excelencia en Diagnóstico: Every failure should be easily traceable and understood / Cada fallo debe ser fácilmente rastreable y comprensible
+Defense in Depth / Defensa en Profundidad: Multiple fallback mechanisms for critical operations / Múltiples mecanismos de respaldo para operaciones críticas
+Clean Code / Código Limpio: Clear responsibilities, meaningful names, comprehensive documentation / Responsabilidades claras, nombres significativos, documentación completa
+Testability / Testabilidad: Every component designed to be easily testable in isolation / Cada componente diseñado para ser fácilmente testeable de forma aislada
 
-### Plan para avanzar
+# Deployment Options / Opciones de Despliegue
+The system can be deployed with:
+El sistema puede desplegarse con:
 
-1) Ejecutar tests unitarios:
-Aplica el código corregido de OrderService y los tests actualizados de OrderServiceUnitTest (proporcionados en respuestas anteriores).
+Shared Database / Base de Datos Compartida: Both PUB and SUB components use the same MySQL instance / Ambos componentes PUB y SUB utilizan la misma instancia de MySQL
+Dedicated Databases / Bases de Datos Dedicadas: Each component has its own database for isolation / Cada componente tiene su propia base de datos para aislamiento
 
-Ejecuta mvn clean test para confirmar que todos los tests pasan.
+Both approaches are supported, with the choice depending on:
+Ambos enfoques son compatibles, con la elección dependiendo de:
 
-### Añadir más tests unitarios:
-Implementar los tests adicionales propuestos:
-shouldFailToProcessOrderWithInvalidOrderId
+Required level of isolation / Nivel requerido de aislamiento
+Data volume and scalability needs / Volumen de datos y necesidades de escalabilidad
+Operational complexity tolerance / Tolerancia a la complejidad operativa
 
-shouldFailToPublishEventWithNullType
+# Future Improvements / Mejoras Futuras
 
-shouldHandleOnTimeoutCorrectly
+Subscriber (SUB) component implementation / Implementación del componente suscriptor (SUB)
+Extended metrics and monitoring dashboards / Métricas extendidas y paneles de monitoreo
+Performance optimization for high-throughput scenarios / Optimización de rendimiento para escenarios de alto throughput
+Stored procedures for database operations / Procedimientos almacenados para operaciones de base de datos
+Multi-region deployment support / Soporte para despliegue multi-región
 
-Añade otros casos de validación (por ejemplo, más pruebas para SagaStep con campos inválidos).
+# License / Licencia
+This project is licensed under the MIT License - see the LICENSE file for details.
+Este proyecto está licenciado bajo la Licencia MIT - consulte el archivo LICENSE para más detalles.
 
-### Refactorización:
-Esboza AbstractOrderSaga, EventPublisher, y OrderRepository una vez que los tests unitarios estén en verde.
-
-Ajusta los tests para la nueva estructura.
-
-### Tests de integración:
-Configura Testcontainers para MySQL y Redis.
-
-Usa el schema.sql adaptado para inicializar la base de datos.
-
-Diseña tests que validen interacciones reales con MySQL y Redis.
-
-### Tests end-to-end:
-Simula escenarios de fallo (Redis caído, timeouts, compensaciones fallidas) usando Testcontainers o WireMock.
-
-### Procedimientos almacenados:
-Diseña procedimientos para createOrder, executeStep, y updateOrderStatus en MySQL.
-
-Implementa cuando la versión refactorizada esté pulida.
-
-Etiqueta como 0.0.1-RELEASE.
-
+# Contact / Contacto
+For questions or feedback, please contact the maintainers at alonsoir@gmail.com.
+Para preguntas o comentarios, contacte a los mantenedores en alonsoir@gmail.com.
