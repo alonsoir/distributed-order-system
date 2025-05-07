@@ -4,8 +4,8 @@ import java.util.Objects;
 
 public record Order(Long id, String status, String correlationId) {
     public Order {
-        Objects.requireNonNull(id, "Order ID must not be null");
+        // El id puede ser null porque se generará en SagaOrchestratorImpl si es necesario
         Objects.requireNonNull(status, "Status must not be null");
-        // correlationId puede ser null
+        Objects.requireNonNull(correlationId, "correlationId must not be null");
     }
 }

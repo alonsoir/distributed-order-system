@@ -3,9 +3,14 @@ package com.example.order.service.integration;
 import com.example.order.service.IdGenerator;
 import com.example.order.service.InventoryService;
 import com.example.order.service.OrderService;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -17,13 +22,12 @@ import org.testcontainers.utility.DockerImageName;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import static org.mockito.Mockito.*;
-
-
+import java.util.UUID;
 
 @SpringBootTest
 @Testcontainers
 @ActiveProfiles("integration")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class OrderServiceIntegrationTest {
 
     @Container
@@ -46,6 +50,11 @@ class OrderServiceIntegrationTest {
     @Autowired
     private IdGenerator idGenerator;
 
+    @BeforeAll
+    void setupAll() {
+
+    }
+
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.r2dbc.url", () -> "r2dbc:mysql://" + mysql.getHost() + ":" + mysql.getFirstMappedPort() + "/orders");
@@ -55,27 +64,105 @@ class OrderServiceIntegrationTest {
         registry.add("spring.data.redis.port", redis::getFirstMappedPort);
     }
 
+    // Configuración de prueba para proporcionar un bean de InventoryService para testing
+    @TestConfiguration
+    static class TestConfig {
+        @Bean
+        @Primary
+        public InventoryService testInventoryService() {
+            return new TestInventoryService();
+        }
+    }
+
+    // Implementación de prueba de InventoryService
+    static class TestInventoryService implements InventoryService {
+        private boolean shouldFail = false;
+
+        public void setShouldFail(boolean shouldFail) {
+            this.shouldFail = shouldFail;
+        }
+
+        @Override
+        public Mono<Void> reserveStock(Long orderId, int quantity) {
+            if (shouldFail) {
+                return Mono.error(new RuntimeException("Stock not available"));
+            }
+            return Mono.empty();
+        }
+
+        @Override
+        public Mono<Void> releaseStock(Long orderId, int quantity) {
+            return Mono.empty();
+        }
+    }
+
     @Test
     void shouldProcessOrderSuccessfully() {
-        Long orderId = idGenerator.generateOrderId();
-        String externalReference = idGenerator.generateExternalReference();
+        // Arrange
+        String externalReference = generateUniqueExternalReference();
         int quantity = 10;
         double amount = 100.0;
 
-        when(inventoryService.reserveStock(anyLong(), anyInt())).thenReturn(Mono.empty());
-        // al procesar la orden, el servicio genera el orderId y lo devuelve en el Order
-        // por lo que esta verificacion no es correcta. Por ahora dejo el orderId, pero en el futuro lo cambiamos
+        // Aseguramos que el servicio de inventario responde correctamente
+        ((TestInventoryService) inventoryService).setShouldFail(false);
+
+        // Act & Assert
         StepVerifier.create(orderService.processOrder(externalReference, quantity, amount))
                 .expectNextMatches(order ->
-                        order.id().equals(orderId) &&
-                                order.status().equals("completed"))
+                        // Verificamos que se ha asignado un ID (no nulo) y que el estado es "completed"
+                        order.id() != null &&
+                                order.status().equals("completed") &&
+                                // Ahora el correlationId no es el externalReference, sino uno generado internamente
+                                order.correlationId() != null)
                 .verifyComplete();
+    }
 
-        // Verificar que los datos se persistieron
-        StepVerifier.create(orderService.createOrder(orderId, "corr-123"))
+    @Test
+    void shouldHandleInventoryServiceFailure() {
+        // Arrange
+        String externalReference = generateUniqueExternalReference();
+        int quantity = 10;
+        double amount = 100.0;
+
+        // Configuramos el servicio de inventario para que falle
+        ((TestInventoryService) inventoryService).setShouldFail(true);
+
+        // Act & Assert
+        StepVerifier.create(orderService.processOrder(externalReference, quantity, amount))
                 .expectNextMatches(order ->
-                        order.id().equals(orderId) &&
-                                order.status().equals("pending"))
+                        // Verificamos que la orden se ha marcado como fallida
+                        order.id() != null &&
+                                order.status().equals("failed") &&
+                                order.correlationId() != null)
                 .verifyComplete();
+    }
+
+    @Test
+    void shouldRejectInvalidOrderParameters() {
+        // Act & Assert - Cantidad negativa
+        StepVerifier.create(orderService.processOrder(generateUniqueExternalReference(), 0, 100.0))
+                .expectErrorMatches(error ->
+                        error instanceof IllegalArgumentException &&
+                                error.getMessage().contains("Quantity must be positive"))
+                .verify();
+
+        // Act & Assert - Monto negativo
+        StepVerifier.create(orderService.processOrder(generateUniqueExternalReference(), 10, -50.0))
+                .expectErrorMatches(error ->
+                        error instanceof IllegalArgumentException &&
+                                error.getMessage().contains("Amount must be non-negative"))
+                .verify();
+
+        // Act & Assert - Referencia externa vacía
+        StepVerifier.create(orderService.processOrder("", 10, 100.0))
+                .expectErrorMatches(error ->
+                        error instanceof IllegalArgumentException &&
+                                error.getMessage().contains("External reference cannot be null or empty"))
+                .verify();
+    }
+
+    private String generateUniqueExternalReference() {
+        // Utiliza UUID para generar referencias externas únicas
+        return "ext-" + UUID.randomUUID().toString();
     }
 }

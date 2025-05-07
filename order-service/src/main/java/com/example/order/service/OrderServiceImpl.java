@@ -1,9 +1,6 @@
 package com.example.order.service;
 
 import com.example.order.domain.Order;
-import com.example.order.events.OrderEvent;
-import com.example.order.events.OrderFailedEvent;
-import com.example.order.model.SagaStep;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.reactor.circuitbreaker.operator.CircuitBreakerOperator;
@@ -15,83 +12,65 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
-import java.util.Random;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
     private static final Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
 
-    private final SagaOrchestrator sagaOrchestrator;
+    private final SagaOrchestratorImpl sagaOrchestrator;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final MeterRegistry meterRegistry;
-    private final IdGenerator idGenerator;
 
     @Override
-    public Mono<Order> processOrder(String externalReference,int quantity, double amount) {
+    public Mono<Order> processOrder(String externalReference, int quantity, double amount) {
+        // Validación básica
+        if (externalReference == null || externalReference.trim().isEmpty()) {
+            return Mono.error(new IllegalArgumentException("External reference cannot be null or empty"));
+        }
+        if (quantity <= 0) {
+            return Mono.error(new IllegalArgumentException("Quantity must be positive"));
+        }
+        if (amount < 0) {
+            return Mono.error(new IllegalArgumentException("Amount must be non-negative"));
+        }
 
-        String correlationId = idGenerator.generateCorrelationId();
-
-        String eventId = idGenerator.generateEventId();
-        log.info("Starting order with correlationId {} eventId {} quantity {} amount {}",
-                 correlationId, eventId, quantity, amount);
+        log.info("Starting order with externalReference {} quantity {} amount {}",
+                externalReference, quantity, amount);
 
         CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker("orderProcessing");
 
         if (!circuitBreaker.tryAcquirePermission()) {
-            log.warn("Circuit breaker open for order with eventId", eventId);
-            return onTimeout(correlationId, eventId, "processOrder", "circuit_breaker_open");
+            log.warn("Circuit breaker open for order with externalReference {}", externalReference);
+            return createFailedOrder("circuit_breaker_open", externalReference);
         }
 
-        Mono<Order> orderMono = sagaOrchestrator.executeOrderSaga(quantity, eventId, amount, correlationId)
+        Mono<Order> orderMono = sagaOrchestrator.executeOrderSaga(quantity, amount)
                 .timeout(Duration.ofSeconds(15))
-                .doOnError(e -> log.error("Timeout or error in order saga for order {}: {}", orderId, e.getMessage()))
-                .onErrorResume(e -> onTimeout(orderId, correlationId, eventId, "processOrder", "global_timeout")); // actualizado
+                .doOnError(e -> log.error("Timeout or error in order saga for externalReference {}: {}",
+                        externalReference, e.getMessage()))
+                .onErrorResume(e -> createFailedOrder("global_timeout", externalReference));
 
         return orderMono.transformDeferred(CircuitBreakerOperator.of(circuitBreaker))
                 .doOnSuccess(order -> {
-                    log.info("Order {} processed successfully: {}", orderId, order);
+                    log.info("Order {} processed successfully: {}", order.id(), order);
                     meterRegistry.counter("orders_success").increment();
                 })
-                .onErrorResume(e -> onTimeout(orderId, correlationId, eventId, "processOrder", "circuit_breaker_open")); // actualizado
+                .onErrorResume(e -> createFailedOrder("circuit_breaker_error", externalReference));
     }
 
 
-    @Override
-    public Mono<Order> createOrder(Long orderId, String correlationId) {
-        log.info("Creating order {} with correlationId {}", orderId, correlationId);
-        return sagaOrchestrator.createOrder(orderId, correlationId);
-    }
+    private Mono<Order> createFailedOrder(String reason, String externalReference) {
+        log.warn("Creating failed order for externalReference {} with reason: {}", externalReference, reason);
 
-    @Override
-    public Mono<Void> publishEvent(OrderEvent event) {
-        log.info("Publishing event: {}", event);
-        return sagaOrchestrator.publishFailedEvent(event instanceof OrderFailedEvent failed
-                ? failed
-                : new OrderFailedEvent(event.getOrderId(), event.getCorrelationId(), event.getEventId(), "unknown", "wrapped in publishEvent"));
-    }
-
-    @Override
-    public Mono<OrderEvent> executeStep(SagaStep step) {
-        log.info("Delegating execution of step {} to SagaOrchestrator", step.getName());
-        return sagaOrchestrator.executeStep(step);
-    }
-
-    private Mono<Order> onTimeout(String correlationId, String eventId,String step,String reason) {
-        log.warn("Returning fallback order with correlationId {} with reason: {}", correlationId, reason);
-        OrderFailedEvent event = new OrderFailedEvent(correlationId, eventId,step,reason);
-        return sagaOrchestrator.publishFailedEvent(event)
+        // Primero creamos un OrderFailedEvent genérico (el SagaOrchestratorImpl establecerá los IDs correctos)
+        return sagaOrchestrator.createFailedEvent(reason, externalReference)
                 .then(Mono.fromCallable(() -> {
-                    Order orderFallBack = fallbackOrder(orderId);
-                    log.info("Fallback order created for {}: {}", orderId, orderFallBack);
+                    // Creamos un Order con id=null (se generará en SagaOrchestratorImpl)
+                    Order orderFallBack = new Order(null, "failed", externalReference);
+                    log.info("Fallback order created with externalReference {}: {}", externalReference, orderFallBack);
                     return orderFallBack;
                 }));
     }
 
-
-    private Order fallbackOrder(Long orderId) {
-        log.warn("Returning fallback order for {}", orderId);
-        return new Order(orderId, "failed", "unknown");
-    }
 }

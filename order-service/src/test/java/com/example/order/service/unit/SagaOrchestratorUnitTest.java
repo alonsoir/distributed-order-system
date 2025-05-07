@@ -3,7 +3,7 @@ package com.example.order.service.unit;
 import com.example.order.service.CompensationManager;
 import com.example.order.service.EventPublisher;
 import com.example.order.service.InventoryService;
-import com.example.order.service.SagaOrchestrator;
+import com.example.order.service.SagaOrchestratorImpl;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,10 +32,10 @@ class SagaOrchestratorUnitTest {
     private MeterRegistry meterRegistry;
 
     @InjectMocks
-    private SagaOrchestrator sagaOrchestrator;
+    private SagaOrchestratorImpl sagaOrchestrator;
 
     @Test
     void testSomeMethod() {
-        // Mock behavior and test SagaOrchestrator logic
+        // Mock behavior and test SagaOrchestratorImpl logic
     }
 }
