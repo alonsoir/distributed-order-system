@@ -27,6 +27,16 @@ public class CompensationManagerImpl implements CompensationManager {
     private final ReactiveRedisTemplate<String, Object> redisTemplate;
     private final MeterRegistry meterRegistry;
 
+    // Método protegido que puede ser sobrescrito en pruebas
+    protected Timer.Sample startTimer() {
+        return Timer.start(meterRegistry);
+    }
+
+    // Método protegido que puede ser sobrescrito en pruebas
+    protected void stopTimer(Timer.Sample sample, Timer timer) {
+        sample.stop(timer);
+    }
+
     @Override
     public Mono<Void> executeCompensation(SagaStep step) {
         if (step == null) {
@@ -45,7 +55,7 @@ public class CompensationManagerImpl implements CompensationManager {
                 "eventId", step.getEventId()
         );
 
-        Timer.Sample compensationTimer = Timer.start(meterRegistry);
+        Timer.Sample compensationTimer = startTimer();
 
         return withDiagnosticContext(diagnosticContext, () -> {
             log.info("Executing compensation for step {} of order {}", step.getName(), step.getOrderId());
@@ -61,14 +71,14 @@ public class CompensationManagerImpl implements CompensationManager {
                                         "attempt", String.valueOf(signal.totalRetries() + 1)).increment();
                             }))
                     .doOnSuccess(c -> {
-                        compensationTimer.stop(meterRegistry.timer(COMPENSATION_TIMER,
+                        stopTimer(compensationTimer, meterRegistry.timer(COMPENSATION_TIMER,
                                 "step", step.getName(),
                                 "status", "success"));
                         log.info("Compensation {} executed successfully for order {}",
                                 step.getName(), step.getOrderId());
                     })
                     .doOnError(compE -> {
-                        compensationTimer.stop(meterRegistry.timer(COMPENSATION_TIMER,
+                        stopTimer(compensationTimer, meterRegistry.timer(COMPENSATION_TIMER,
                                 "step", step.getName(),
                                 "status", "failed",
                                 "error_type", compE.getClass().getSimpleName()));

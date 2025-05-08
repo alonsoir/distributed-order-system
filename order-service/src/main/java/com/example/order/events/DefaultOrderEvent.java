@@ -1,21 +1,31 @@
 package com.example.order.events;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
-import java.io.IOException;
-
+/**
+ * Implementación por defecto de un evento de orden.
+ */
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class DefaultOrderEvent implements OrderEvent {
+
+    private static final ObjectMapper objectMapper = new ObjectMapper();
+
     private String eventId;
     private String correlationId;
     private Long orderId;
     private OrderEventType type;
+    private String payload;
 
     @Override
-    public Long getOrderId() {
-        return orderId;
+    public String getEventId() {
+        return eventId;
     }
 
     @Override
@@ -24,8 +34,8 @@ public class DefaultOrderEvent implements OrderEvent {
     }
 
     @Override
-    public String getEventId() {
-        return eventId;
+    public Long getOrderId() {
+        return orderId;
     }
 
     @Override
@@ -36,21 +46,23 @@ public class DefaultOrderEvent implements OrderEvent {
     @Override
     public String toJson() {
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            mapper.registerModule(new JavaTimeModule());
-            return mapper.writeValueAsString(this);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to serialize event", e);
+            return objectMapper.writeValueAsString(this);
+        } catch (Exception e) {
+            throw new RuntimeException("Error converting event to JSON", e);
         }
     }
 
+    /**
+     * Crea un evento a partir de su representación JSON.
+     *
+     * @param json Representación JSON del evento
+     * @return El evento reconstruido
+     */
     public static DefaultOrderEvent fromJson(String json) {
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            mapper.registerModule(new JavaTimeModule());
-            return mapper.readValue(json, DefaultOrderEvent.class);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to deserialize event", e);
+            return objectMapper.readValue(json, DefaultOrderEvent.class);
+        } catch (Exception e) {
+            throw new RuntimeException("Error parsing JSON to event", e);
         }
     }
 }
