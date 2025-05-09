@@ -11,7 +11,7 @@ public class EventPublishOutcome<T> {
     private final boolean dlqFailure;
     private final Throwable error;
 
-    private EventPublishOutcome(T event, boolean success, boolean outbox, boolean dlq, boolean dlqFailure, Throwable error) {
+    public EventPublishOutcome(T event, boolean success, boolean outbox, boolean dlq, boolean dlqFailure, Throwable error) {
         this.event = event;
         this.success = success;
         this.outbox = outbox;
