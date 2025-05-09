@@ -251,6 +251,10 @@
           <includes>
             <include>**/*Test.java</include>
           </includes>
+          <systemPropertyVariables>
+            <test.mode>true</test.mode>
+            <logback.configurationFile>logback-test.xml</logback.configurationFile>
+          </systemPropertyVariables>
         </configuration>
       </plugin>
       <plugin>
