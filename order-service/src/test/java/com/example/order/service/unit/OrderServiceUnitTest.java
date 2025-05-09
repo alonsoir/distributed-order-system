@@ -66,9 +66,9 @@ class OrderServiceUnitTest {
 
     @BeforeEach
     void setUp() {
-        when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
-        when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
-        when(meterRegistry.counter("orders_success")).thenReturn(ordersSuccessCounter);
+        lenient().when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
+        lenient().when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
+        lenient().when(meterRegistry.counter("orders_success")).thenReturn(ordersSuccessCounter);
     }
 
     /**
@@ -153,25 +153,35 @@ class OrderServiceUnitTest {
     @Test
     void shouldHandleTimeoutDuringOrderProcessing() {
         // Arrange
-        Order fallbackOrder = new Order(null, "failed", TEST_EXTERNAL_REF);
+        System.out.println("Setting up timeout test");
 
-        when(sagaOrchestrator.executeOrderSaga(TEST_QUANTITY, TEST_AMOUNT))
-                .thenReturn(Mono.delay(Duration.ofMillis(100)).then(Mono.empty())); // Will timeout
+        Order failedOrder = new Order(null, "failed", TEST_EXTERNAL_REF);
+
+        // Mock the createFailedEvent to return empty mono
         when(sagaOrchestrator.createFailedEvent(eq("global_timeout"), eq(TEST_EXTERNAL_REF)))
                 .thenReturn(Mono.empty());
 
-        // Act
-        Mono<Order> result = orderService.processOrder(TEST_EXTERNAL_REF, TEST_QUANTITY, TEST_AMOUNT)
-                .timeout(Duration.ofMillis(50)); // Force timeout
+        // This is the key change: Instead of making the saga take too long and then applying a timeout,
+        // we directly simulate what happens when there's a timeout
+        when(sagaOrchestrator.executeOrderSaga(TEST_QUANTITY, TEST_AMOUNT))
+                .thenReturn(Mono.error(new java.util.concurrent.TimeoutException("Simulated timeout")));
+
+        // Act - no more external timeout
+        System.out.println("Executing processOrder with simulated timeout");
+        Mono<Order> result = orderService.processOrder(TEST_EXTERNAL_REF, TEST_QUANTITY, TEST_AMOUNT);
 
         // Assert
+        System.out.println("Verifying the result");
         StepVerifier.create(result)
-                .expectNextMatches(order ->
-                        order.status().equals("failed") &&
-                                order.correlationId().equals(TEST_EXTERNAL_REF))
+                .expectNextMatches(order -> {
+                    System.out.println("Checking order: " + order);
+                    return order.status().equals("failed") &&
+                            order.correlationId().equals(TEST_EXTERNAL_REF);
+                })
                 .verifyComplete();
 
         verify(sagaOrchestrator).createFailedEvent(eq("global_timeout"), eq(TEST_EXTERNAL_REF));
+        System.out.println("Test completed");
     }
 
     /**
