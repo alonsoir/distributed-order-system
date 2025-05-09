@@ -1,0 +1,17 @@
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/integration/BaseIntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/integration/CompensationManagerIntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/integration/DatabaseClientIntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/integration/IntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/integration/OrderServiceIntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/integration/SimpleTestcontainersIntegrationTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/CircuitBreakerUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/CompensationManagerUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/DLQManagerUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/DatabaseClientUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/EventPublisherUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/InventoryServiceUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/OrderServiceUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/RedisUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/SagaOrchestratorUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/unit/SimpleTestContainerUnitTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/service/util/TestAwareLogger.java

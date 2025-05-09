@@ -1,0 +1,6 @@
+projectKey=distributed-order-system
+serverUrl=http://localhost:9000
+serverVersion=25.4.0.105899
+dashboardUrl=http://localhost:9000/dashboard?id=distributed-order-system
+ceTaskId=9a70eec9-72eb-47e3-84c5-5ac3b516d2f9
+ceTaskUrl=http://localhost:9000/api/ce/task?id=9a70eec9-72eb-47e3-84c5-5ac3b516d2f9

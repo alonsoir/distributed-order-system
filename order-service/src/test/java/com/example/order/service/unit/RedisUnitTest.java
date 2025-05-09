@@ -26,7 +26,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-@ActiveProfiles("unit")
+@ActiveProfiles("test")
 @SpringBootTest(
         classes = RedisConfig.class
 )
