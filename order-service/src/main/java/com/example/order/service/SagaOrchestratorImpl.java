@@ -46,14 +46,15 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
         Long orderId = idGenerator.generateOrderId();
         String eventId = idGenerator.generateEventId();
         String correlationId = idGenerator.generateCorrelationId();
-
+        String externalReference = idGenerator.generateExternalReference();
         // Usar ReactiveUtils para crear el contexto
         Map<String, String> context = ReactiveUtils.createContext(
                 "orderId", orderId.toString(),
                 "correlationId", correlationId,
                 "eventId", eventId,
                 "quantity", String.valueOf(quantity),
-                "amount", String.valueOf(amount)
+                "amount", String.valueOf(amount),
+                "externalReference", externalReference
         );
 
         // Crear tag para métricas
@@ -65,10 +66,10 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
                 () -> {
                     log.info("Starting order saga execution with quantity={}, amount={}", quantity, amount);
 
-                    return createOrder(orderId, correlationId, eventId)
+                    return createOrder(orderId, correlationId, eventId, externalReference, quantity)
                             .flatMap(order -> {
                                 log.info("Order created, proceeding to reserve stock");
-                                return executeStep(createReserveStockStep(inventoryService, orderId, quantity, correlationId, eventId));
+                                return executeStep(createReserveStockStep(inventoryService, orderId, quantity, correlationId, eventId, externalReference));
                             })
                             .flatMap(event -> {
                                 log.info("Stock reserved, updating order status to completed");
@@ -96,7 +97,8 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
                 "stepName", step.getName(),
                 "orderId", step.getOrderId().toString(),
                 "correlationId", step.getCorrelationId(),
-                "eventId", step.getEventId()
+                "eventId", step.getEventId(),
+                "externalReference", step.getExternalReference()
         );
 
         Tag stepTag = Tag.of("step", step.getName());
@@ -104,15 +106,58 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
         return ReactiveUtils.withContextAndMetrics(
                 context,
                 () -> {
-                    log.info("Executing step {} for order {} correlationId {}",
+                    log.info("Preparing to execute step {} for order {} correlationId {}",
                             step.getName(), step.getOrderId(), step.getCorrelationId());
 
-                    Mono<OrderEvent> stepMono = step.getAction().get()
-                            .then(Mono.defer(() -> {
-                                log.info("Step action completed, publishing success event");
-                                return publishEvent(step.getSuccessEvent().apply(step.getEventId()),
-                                        step.getName(), step.getTopic());
-                            }))
+                    // Verificar idempotencia primero - implementación AT LEAST ONCE
+                    return isEventProcessed(step.getEventId())
+                            .flatMap(processed -> {
+                                if (processed) {
+                                    // Si ya se procesó, simplemente devolvemos el evento de éxito sin ejecutar la acción
+                                    log.info("Step {} for order {} already processed, returning success event without execution",
+                                            step.getName(), step.getOrderId());
+                                    return Mono.just(step.getSuccessEvent().apply(step.getEventId()));
+                                }
+
+                                log.info("Executing step {} for order {} (new execution)",
+                                        step.getName(), step.getOrderId());
+
+                                // Registrar el inicio de la ejecución del paso
+                                return databaseClient.sql("INSERT INTO event_history " +
+                                                "(event_id, correlation_id, order_id, event_type, operation, outcome, timestamp) " +
+                                                "VALUES (:eventId, :correlationId, :orderId, :eventType, :operation, 'STARTED', NOW())")
+                                        .bind("eventId", step.getEventId())
+                                        .bind("correlationId", step.getCorrelationId())
+                                        .bind("orderId", step.getOrderId())
+                                        .bind("eventType", "SAGA_STEP")
+                                        .bind("operation", step.getName())
+                                        .then()
+                                        .then(
+                                                // Ejecutar la acción del paso y publicar el evento de éxito
+                                                transactionalOperator.transactional(
+                                                        step.getAction().get()
+                                                                // Marcar el evento como procesado en la misma transacción
+                                                                .then(markEventAsProcessed(step.getEventId()))
+                                                                // Registrar el resultado exitoso
+                                                                .then(databaseClient.sql("INSERT INTO event_history " +
+                                                                                "(event_id, correlation_id, order_id, event_type, operation, outcome, timestamp) " +
+                                                                                "VALUES (:eventId, :correlationId, :orderId, :eventType, :operation, 'COMPLETED', NOW())")
+                                                                        .bind("eventId", step.getEventId())
+                                                                        .bind("correlationId", step.getCorrelationId())
+                                                                        .bind("orderId", step.getOrderId())
+                                                                        .bind("eventType", "SAGA_STEP")
+                                                                        .bind("operation", step.getName())
+                                                                        .then()
+                                                                )
+                                                                .then(Mono.defer(() -> {
+                                                                    log.info("Step action completed, publishing success event");
+                                                                    // Crear y publicar el evento de éxito
+                                                                    OrderEvent successEvent = step.getSuccessEvent().apply(step.getEventId());
+                                                                    return publishEvent(successEvent, step.getName(), step.getTopic());
+                                                                }))
+                                                )
+                                        );
+                            })
                             .doOnSuccess(event -> {
                                 log.info("Step {} completed successfully for order {}",
                                         step.getName(), step.getOrderId());
@@ -124,12 +169,10 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
                                         step.getName(), step.getOrderId(), e.getMessage(), e);
                                 meterRegistry.counter(SagaConfig.COUNTER_SAGA_STEP_FAILED,
                                         "step", step.getName()).increment();
-                            });
-
-                    // Aplicamos resiliencia y transacción utilizando el ResilienceManager
-                    return stepMono
+                            })
+                            // Aplicamos resiliencia utilizando el ResilienceManager
                             .transform(resilienceManager.applyResilience(step.getName()))
-                            .as(transactionalOperator::transactional)
+                            // Manejamos errores con compensación
                             .onErrorResume(e -> handleStepError(step, e, compensationManager));
                 },
                 meterRegistry,
@@ -139,11 +182,14 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
     }
 
     @Override
-    public Mono<Order> createOrder(Long orderId, String correlationId, String eventId) {
+    public Mono<Order> createOrder(Long orderId, String correlationId, String eventId, String externalReference, int quantity) {
+
         Map<String, String> context = ReactiveUtils.createContext(
                 "orderId", orderId.toString(),
                 "correlationId", correlationId,
-                "eventId", eventId
+                "eventId", eventId,
+                "externalReference", externalReference,
+                "quantity", String.valueOf(quantity)
         );
 
         Tag correlationTag = Tag.of("correlation_id", correlationId);
@@ -151,10 +197,10 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
         return ReactiveUtils.withContextAndMetrics(
                 context,
                 () -> {
-                    log.info("Creating order {} with correlationId {} and eventId {}",
-                            orderId, correlationId, eventId);
-
-                    OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, "pending");
+                    log.info("Creating order {} with correlationId {}, eventId {} and externalReference {}",
+                            orderId, correlationId, eventId, externalReference);
+                    //    public OrderCreatedEvent(Long orderId, String correlationId, String eventId, String externalReference, int quantity) {
+                    OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity);
 
                     Mono<Order> orderMono = insertOrderData(orderId, correlationId, eventId, event)
                             .then(publishEvent(event, "createOrder", EventTopics.ORDER_CREATED.getTopic()))
@@ -164,7 +210,11 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
                                     orderId, e.getMessage(), e));
 
                     return transactionalOperator.transactional(orderMono)
-                            .onErrorResume(e -> handleCreateOrderError(orderId, correlationId, eventId, e));
+                            .onErrorResume(e -> handleCreateOrderError(orderId,
+                                    correlationId,
+                                    eventId,
+                                    externalReference,
+                                    e));
                 },
                 meterRegistry,
                 SagaConfig.METRIC_ORDER_CREATION,
@@ -202,8 +252,12 @@ public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOr
             log.info("Creating failed event with reason: {}, externalReference: {}",
                     reason, externalReference);
 
-            OrderFailedEvent event = new OrderFailedEvent(orderId, correlationId, eventId,
-                    "processOrder", reason);
+            OrderFailedEvent event = new OrderFailedEvent(orderId,
+                    correlationId,
+                    eventId,
+                    "processOrder",
+                    reason,
+                    externalReference);
             return publishFailedEvent(event);
         });
     }

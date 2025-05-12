@@ -29,4 +29,6 @@ public interface OrderEvent {
      * @return Representación JSON del evento
      */
     String toJson();
+
+    String getExternalReference();
 }

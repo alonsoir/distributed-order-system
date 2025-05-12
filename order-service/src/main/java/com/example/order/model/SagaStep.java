@@ -19,9 +19,17 @@ public class SagaStep {
     private final Long orderId;
     private final String correlationId;
     private final String eventId;
+    private final String externalReference;
 
-    public SagaStep(String name, String topic, Supplier<Mono<Void>> action, Supplier<Mono<Void>> compensation,
-                    Function<String, OrderEvent> successEvent, Long orderId, String correlationId, String eventId) {
+    public SagaStep(String name,
+                    String topic,
+                    Supplier<Mono<Void>> action,
+                    Supplier<Mono<Void>> compensation,
+                    Function<String, OrderEvent> successEvent,
+                    Long orderId,
+                    String correlationId,
+                    String eventId,
+                    String externalReference) {
         if (topic == null) {
             throw new IllegalArgumentException("Topic cannot be null");
         }
@@ -33,5 +41,7 @@ public class SagaStep {
         this.orderId = orderId;
         this.correlationId = correlationId;
         this.eventId = eventId;
+        this.externalReference = externalReference;
+
     }
 }

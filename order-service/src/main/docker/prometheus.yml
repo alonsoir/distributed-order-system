@@ -1,0 +1,50 @@
+## Paso 1: Crea el archivo prometheus.yml
+# Ubicación: order-service/src/main/docker/prometheus.yml
+
+echo 'global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Configuración de Alertmanager
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# Reglas de alertas (se cargan si hay un Alertmanager configurado)
+rule_files:
+# - "first_rules.yml"
+# - "second_rules.yml"
+
+# Configuración de fuentes de métricas
+scrape_configs:
+  # Métricas del propio Prometheus
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Métricas del servicio de órdenes
+  - job_name: "order-service"
+    metrics_path: "/actuator/prometheus"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["order-service:8081"]
+
+  # Métricas de Traefik
+  - job_name: "traefik"
+    static_configs:
+      - targets: ["traefik:8080"]
+    metrics_path: /metrics
+
+  # Métricas de Redis
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+    metrics_path: /metrics
+
+  # Métricas de MySQL
+  - job_name: "mysql"
+    static_configs:
+      - targets: ["mysql-exporter:9104"]
+    metrics_path: /metrics

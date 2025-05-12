@@ -9,9 +9,10 @@ public class OrderFailedEvent implements OrderEvent {
     private final String eventId;
     private final String step;
     private final String reason;
+    private final String externalReference;
 
-    public OrderFailedEvent(Long orderId,String correlationId, String eventId, String step, String reason) {
-        validate(orderId, correlationId, eventId);
+    public OrderFailedEvent(Long orderId,String correlationId, String eventId, String step, String reason,String externalReference) {
+        validate(orderId, correlationId, eventId,externalReference);
         if (step == null || step.isBlank()) {
             throw new IllegalArgumentException("Step cannot be null or empty");
         }
@@ -23,9 +24,10 @@ public class OrderFailedEvent implements OrderEvent {
         this.eventId = eventId;
         this.step = step;
         this.reason = reason;
+        this.externalReference = externalReference;
     }
 
-    private static void validate(Long orderId, String correlationId, String eventId) {
+    private static void validate(Long orderId, String correlationId, String eventId,String externalReference) {
         if (orderId == null || orderId <= 0) {
             throw new IllegalArgumentException("OrderId cannot be null and must be positive");
         }
@@ -33,6 +35,9 @@ public class OrderFailedEvent implements OrderEvent {
             throw new IllegalArgumentException("CorrelationId cannot be null or empty");
         }
         if (eventId == null || eventId.isBlank()) {
+            throw new IllegalArgumentException("EventId cannot be null and must be positive");
+        }
+        if (externalReference == null || externalReference.isBlank()) {
             throw new IllegalArgumentException("EventId cannot be null and must be positive");
         }
     }

@@ -10,6 +10,7 @@ import com.example.order.service.EventPublisher;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Timer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,7 +18,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.r2dbc.core.DatabaseClient;
-import org.springframework.r2dbc.core.DatabaseClient.GenericExecuteSpec;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
@@ -25,6 +25,7 @@ import reactor.test.StepVerifier;
 
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -75,6 +76,7 @@ class SagaOrchestratorUnitTest {
     private static final Long ORDER_ID = 1234L;
     private static final String CORRELATION_ID = "corr-123";
     private static final String EVENT_ID = "event-123";
+    private static final String EXTERNAL_REF = "ext-123";
     private static final int QUANTITY = 10;
     private static final double AMOUNT = 100.0;
 
@@ -98,35 +100,46 @@ class SagaOrchestratorUnitTest {
         // Mock metrics
         when(meterRegistry.counter(anyString(), any(String.class), any(String.class)))
                 .thenReturn(counter);
-        when(meterRegistry.timer(anyString(), any())).thenReturn(timer);
+        when(meterRegistry.timer(anyString(), any(Iterable.class)))
+                .thenReturn(timer);
 
         // Mock ID generation
         when(idGenerator.generateOrderId()).thenReturn(ORDER_ID);
         when(idGenerator.generateCorrelationId()).thenReturn(CORRELATION_ID);
         when(idGenerator.generateEventId()).thenReturn(EVENT_ID);
+        when(idGenerator.generateExternalReference()).thenReturn(EXTERNAL_REF);
+
+        // Mock Timer.start
+        MockedStatic<Timer> timerMock = mockStatic(Timer.class);
+        timerMock.when(() -> Timer.start(any(MeterRegistry.class)))
+                .thenReturn(timerSample);
 
         // Use Mockito spy to handle static methods in ReactiveUtils
         MockedStatic<ReactiveUtils> reactiveUtilsMock = mockStatic(ReactiveUtils.class);
 
         // Setup ReactiveUtils.withContextAndMetrics to pass through the Mono
         reactiveUtilsMock.when(() -> ReactiveUtils.withContextAndMetrics(
-                        anyMap(), any(), any(), anyString(), any()))
+                        anyMap(),
+                        any(),
+                        any(MeterRegistry.class),
+                        anyString(),
+                        any(Tag[].class)))
                 .thenAnswer(invocation -> {
-                    Runnable supplier = invocation.getArgument(1);
-                    return supplier.run();
+                    Supplier<Mono<?>> supplier = invocation.getArgument(1);
+                    return supplier.get();
                 });
 
         // Setup ReactiveUtils.withDiagnosticContext to pass through the Mono
         reactiveUtilsMock.when(() -> ReactiveUtils.withDiagnosticContext(
-                        anyMap(), any()))
+                        anyMap(),
+                        any()))
                 .thenAnswer(invocation -> {
-                    Runnable supplier = invocation.getArgument(1);
-                    return supplier.run();
+                    Supplier<Mono<?>> supplier = invocation.getArgument(1);
+                    return supplier.get();
                 });
 
         // Setup ReactiveUtils.createContext to return an empty map
-        reactiveUtilsMock.when(() -> ReactiveUtils.createContext(
-                        any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        reactiveUtilsMock.when(() -> ReactiveUtils.createContext(any(String[].class)))
                 .thenReturn(Map.of());
     }
 
@@ -136,9 +149,9 @@ class SagaOrchestratorUnitTest {
         when(inventoryService.reserveStock(any(), anyInt()))
                 .thenReturn(Mono.empty());
 
-        // Mock event publisher to return success
+        // Mock event publisher to return success with updated EventPublishOutcome constructor
         when(eventPublisher.publishEvent(any(), anyString(), anyString()))
-                .thenReturn(Mono.just(new EventPublishOutcome(true, null, null)));
+                .thenReturn(Mono.just(EventPublishOutcome.success(any(OrderEvent.class))));
 
         // Execute test
         Mono<Order> result = sagaOrchestrator.executeOrderSaga(QUANTITY, AMOUNT);
@@ -169,7 +182,7 @@ class SagaOrchestratorUnitTest {
 
         // Mock event publisher for failure event
         when(eventPublisher.publishEvent(any(OrderFailedEvent.class), anyString(), anyString()))
-                .thenReturn(Mono.just(new EventPublishOutcome(true, null, null)));
+                .thenReturn(Mono.just(EventPublishOutcome.success(any(OrderFailedEvent.class))));
 
         // Execute test
         Mono<Order> result = sagaOrchestrator.executeOrderSaga(QUANTITY, AMOUNT);
@@ -190,10 +203,10 @@ class SagaOrchestratorUnitTest {
     void testCreateOrder_Success() {
         // Mock event publisher
         when(eventPublisher.publishEvent(any(OrderCreatedEvent.class), anyString(), anyString()))
-                .thenReturn(Mono.just(new EventPublishOutcome(true, null, null)));
+                .thenReturn(Mono.just(EventPublishOutcome.success(any(OrderCreatedEvent.class))));
 
         // Execute test
-        Mono<Order> result = sagaOrchestrator.createOrder(ORDER_ID, CORRELATION_ID, EVENT_ID);
+        Mono<Order> result = sagaOrchestrator.createOrder(ORDER_ID, CORRELATION_ID, EVENT_ID, EXTERNAL_REF, QUANTITY);
 
         // Verify result
         StepVerifier.create(result)
@@ -218,12 +231,13 @@ class SagaOrchestratorUnitTest {
                 .orderId(ORDER_ID)
                 .correlationId(CORRELATION_ID)
                 .eventId(EVENT_ID)
-                .successEvent(eventId -> new StockReservedEvent(ORDER_ID, CORRELATION_ID, eventId, QUANTITY))
+                .externalReference(EXTERNAL_REF)
+                .successEvent(eventId -> new StockReservedEvent(ORDER_ID, CORRELATION_ID, eventId, EXTERNAL_REF, QUANTITY))
                 .build();
 
         // Mock event publisher
         when(eventPublisher.publishEvent(any(StockReservedEvent.class), anyString(), anyString()))
-                .thenReturn(Mono.just(new EventPublishOutcome(true, null, null)));
+                .thenReturn(Mono.just(EventPublishOutcome.success(any(StockReservedEvent.class))));
 
         // Execute test
         Mono<OrderEvent> result = sagaOrchestrator.executeStep(step);
@@ -252,12 +266,13 @@ class SagaOrchestratorUnitTest {
                 .orderId(ORDER_ID)
                 .correlationId(CORRELATION_ID)
                 .eventId(EVENT_ID)
-                .successEvent(eventId -> new StockReservedEvent(ORDER_ID, CORRELATION_ID, eventId, QUANTITY))
+                .externalReference(EXTERNAL_REF)
+                .successEvent(eventId -> new StockReservedEvent(ORDER_ID, CORRELATION_ID, eventId, EXTERNAL_REF, QUANTITY))
                 .build();
 
         // Mock event publisher for failure event
         when(eventPublisher.publishEvent(any(OrderFailedEvent.class), anyString(), anyString()))
-                .thenReturn(Mono.just(new EventPublishOutcome(true, null, null)));
+                .thenReturn(Mono.just(EventPublishOutcome.success(any(OrderFailedEvent.class))));
 
         // Mock compensation
         when(compensationManager.executeCompensation(any()))
@@ -285,7 +300,7 @@ class SagaOrchestratorUnitTest {
 
         // Mock event publisher
         when(eventPublisher.publishEvent(any(OrderFailedEvent.class), anyString(), anyString()))
-                .thenReturn(Mono.just(new EventPublishOutcome(true, null, null)));
+                .thenReturn(Mono.just(EventPublishOutcome.success(any(OrderFailedEvent.class))));
 
         // Execute test
         Mono<Void> result = sagaOrchestrator.createFailedEvent(reason, externalRef);

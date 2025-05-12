@@ -1,63 +1,400 @@
+version: '3.8'
+
 services:
+  # Proxy/Load Balancer
   traefik:
     image: traefik:v2.11
+    container_name: traefik
     command:
       - --api.dashboard=true
       - --providers.docker=true
       - --entrypoints.web.address=:80
+      - --log.level=INFO
+      - --metrics.prometheus=true
+      - --metrics.prometheus.addEntryPointsLabels=true
+      - --metrics.prometheus.addServicesLabels=true
+      - --providers.docker.exposedByDefault=false
     ports:
       - "80:80"
       - "8080:8080" # Dashboard
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.entrypoints=web"
     networks:
-      - default
+      - saga-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
 
+  # Servicio de Órdenes (Componente principal - asignamos más recursos)
   order-service:
     build:
       context: ../..
       dockerfile: src/main/docker/Dockerfile
     image: order-service:1.0.0-SNAPSHOT
+    container_name: order-service
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.order.rule=Host(`order.localhost`)"
       - "traefik.http.services.order.loadbalancer.server.port=8080"
+      - "traefik.http.routers.order.entrypoints=web"
+      # Exponer métricas para Prometheus
+      - "traefik.http.routers.order-metrics.rule=Host(`metrics.order.localhost`)"
+      - "traefik.http.routers.order-metrics.service=order-metrics"
+      - "traefik.http.services.order-metrics.loadbalancer.server.port=8081"
+      # Exponer actuator para monitoreo
+      - "traefik.http.routers.order-actuator.rule=Host(`actuator.order.localhost`)"
+      - "traefik.http.routers.order-actuator.service=order-actuator"
+      - "traefik.http.services.order-actuator.loadbalancer.server.port=8082"
     environment:
+      # Configuración de base de datos
       - SPRING_R2DBC_URL=r2dbc:mysql://mysql:3306/orders
       - SPRING_R2DBC_USERNAME=root
       - SPRING_R2DBC_PASSWORD=root
+      # Configuración de Redis
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
-      - SPRING_LOGGING_LEVEL_ORG_SPRINGFRAMEWORK=DEBUG
+      # Configuración de logging
+      - SPRING_LOGGING_LEVEL_ROOT=INFO
+      - SPRING_LOGGING_LEVEL_COM_EXAMPLE=DEBUG
+      # Configuración de JFR y rendimiento
+      - JFR_ENABLED=true
+      - JFR_DURATION=30m
+      - JFR_OPTIONS=settings=profile
+      # Configuración de resiliencia
+      - RESILIENCE_ENABLED=true
+      - RESILIENCE_TIMEOUT=5000
+      - RESILIENCE_RETRY_MAX_ATTEMPTS=3
+      # Actuator y Métricas
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=*
+      - MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED=true
+      - MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS=always
+      - MANAGEMENT_METRICS_EXPORT_PROMETHEUS_ENABLED=true
+      # Configuración JVM específica para la memoria asignada
+      - JAVA_OPTS=-XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage=50.0
     depends_on:
-      - redis
-      - mysql
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
     networks:
-      - default
-
-  redis:
-    image: redis:7
+      - saga-network
     ports:
-      - "6379:6379"
-    networks:
-      - default
+      # Puerto JMX para herramientas como VisualVM/JConsole
+      - "9999:9999"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    volumes:
+      - order-logs:/opt/app/logs
+      - order-dlq:/opt/app/dlq
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
 
+  # Base de datos MySQL
   mysql:
     image: mysql:8.0
+    container_name: mysql
     ports:
       - "3306:3306"
     environment:
       - MYSQL_DATABASE=orders
       - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_CHARSET=utf8mb4
+      - MYSQL_COLLATION=utf8mb4_unicode_ci
+      # Optimizaciones para rendimiento
+      - MYSQL_INNODB_BUFFER_POOL_SIZE=1G
+      - MYSQL_INNODB_FLUSH_LOG_AT_TRX_COMMIT=2
+      - MYSQL_INNODB_FLUSH_METHOD=O_DIRECT
     volumes:
       - mysql-data:/var/lib/mysql
       - ./mysql-init:/docker-entrypoint-initdb.d
+      - mysql-logs:/var/log/mysql
     networks:
-      - default
+      - saga-network
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=1G
+      --innodb-flush-log-at-trx-commit=2
+      --innodb-flush-method=O_DIRECT
+      --max-connections=1000
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.5'
+        reservations:
+          memory: 1G
+          cpus: '0.75'
+
+  # Redis para eventos y cachés
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - saga-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.75'
+        reservations:
+          memory: 384M
+          cpus: '0.5'
+
+  # Herramienta de monitoreo para Redis
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - saga-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.redis-commander.rule=Host(`redis.localhost`)"
+      - "traefik.http.services.redis-commander.loadbalancer.server.port=8081"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+        reservations:
+          memory: 128M
+          cpus: '0.2'
+
+  # Administrador de MySQL
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: phpmyadmin
+    environment:
+      - PMA_HOST=mysql
+      - PMA_PORT=3306
+      - UPLOAD_LIMIT=300M
+    ports:
+      - "8082:80"
+    depends_on:
+      - mysql
+    networks:
+      - saga-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.phpmyadmin.rule=Host(`mysql.localhost`)"
+      - "traefik.http.services.phpmyadmin.loadbalancer.server.port=80"
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Prometheus para métricas
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=15d'
+      - '--query.max-samples=50000000'
+    ports:
+      - "9090:9090"
+    networks:
+      - saga-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.localhost`)"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: '1.0'
+        reservations:
+          memory: 768M
+          cpus: '0.5'
+
+  # Grafana para visualizar métricas
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-clock-panel
+    ports:
+      - "3000:3000"
+    networks:
+      - saga-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.localhost`)"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.75'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+  # Visualizador de contenedores
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - portainer-data:/data
+    ports:
+      - "9000:9000"
+    networks:
+      - saga-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.localhost`)"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+
+  # Exportador de métricas MySQL para Prometheus
+  mysql-exporter:
+    image: prom/mysqld-exporter:latest
+    container_name: mysql-exporter
+    ports:
+      - "9104:9104"
+    environment:
+      - DATA_SOURCE_NAME=root:root@(mysql:3306)/
+    depends_on:
+      - mysql
+    networks:
+      - saga-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.2'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+
+  # Exportador de métricas Redis para Prometheus
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    depends_on:
+      - redis
+    networks:
+      - saga-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.2'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
 
 volumes:
   mysql-data:
+    name: saga-mysql-data
+  mysql-logs:
+    name: saga-mysql-logs
+  redis-data:
+    name: saga-redis-data
+  order-logs:
+    name: saga-order-logs
+  order-dlq:
+    name: saga-order-dlq
+  prometheus-data:
+    name: saga-prometheus-data
+  grafana-data:
+    name: saga-grafana-data
+  portainer-data:
+    name: saga-portainer-data
 
 networks:
-  default:
+  saga-network:
+    name: saga-network
     driver: bridge

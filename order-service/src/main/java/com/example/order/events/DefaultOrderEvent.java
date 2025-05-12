@@ -19,6 +19,7 @@ public class DefaultOrderEvent implements OrderEvent {
 
     private String eventId;
     private String correlationId;
+    private String externalReference;
     private Long orderId;
     private OrderEventType type;
     private String payload;

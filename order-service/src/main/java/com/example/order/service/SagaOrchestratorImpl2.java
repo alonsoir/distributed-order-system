@@ -19,11 +19,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
-import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 
 /**
  * Implementación robusta del orquestador de sagas
@@ -63,14 +62,14 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
 
         // Gauge para sagas en progreso
         AtomicReference<Double> sagasInProgress = new AtomicReference<>(0.0);
-        meterRegistry.gauge("saga.in_progress", sagasInProgress);
+        meterRegistry.gauge("saga.in_progress", sagasInProgress, AtomicReference::get);
 
         // Configurar métricas para monitoreo de salud
         meterRegistry.gauge("saga.health.order_creation_success_rate",
-                () -> getSuccessRate("createOrder"));
+                this, o -> o.getSuccessRate("createOrder"));
 
         meterRegistry.gauge("saga.health.stock_reservation_success_rate",
-                () -> getSuccessRate("reserveStock"));
+                this, o -> o.getSuccessRate("reserveStock"));
 
         log.info("SagaOrchestratorImpl2 initialized with robust configuration");
     }
@@ -98,6 +97,7 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
         Long orderId = idGenerator.generateOrderId();
         String eventId = idGenerator.generateEventId();
         String correlationId = idGenerator.generateCorrelationId();
+        String externalReference = idGenerator.generateExternalReference();
 
         // Validar IDs generados
         if (orderId == null || eventId == null || correlationId == null) {
@@ -135,16 +135,16 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
 
                                 // Flow principal de saga
                                 return transactionalOperator.transactional(
-                                                createOrder(orderId, correlationId, eventId)
+                                                createOrder(orderId, correlationId, eventId, externalReference, quantity)
                                                         .flatMap(order -> {
-                                                            if (!"pending".equals(order.getStatus())) {
-                                                                log.warn("Order status is not 'pending': {}", order.getStatus());
+                                                            if (!"pending".equals(order.status())) {
+                                                                log.warn("Order status is not 'pending': {}", order.status());
                                                                 return Mono.just(order);  // No continuar si no está en pending
                                                             }
 
                                                             log.info("Order created, proceeding to reserve stock");
                                                             SagaStep reserveStockStep = createReserveStockStep(
-                                                                    inventoryService, orderId, quantity, correlationId, eventId);
+                                                                    inventoryService, orderId, quantity, correlationId, eventId, externalReference);
 
                                                             return executeStep(reserveStockStep)
                                                                     .flatMap(event -> {
@@ -205,18 +205,26 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
                 });
     }
 
+    // For backward compatibility
     @Override
-    public Mono<Order> createOrder(Long orderId, String correlationId, String eventId) {
+    public Mono<Order> createOrder(Long orderId, String correlationId, String eventId, String externalReference) {
+        // Use default quantity if not provided
+        return createOrder(orderId, correlationId, eventId, externalReference, 1);
+    }
+
+    @Override
+    public Mono<Order> createOrder(Long orderId, String correlationId, String eventId, String externalReference, int quantity) {
         // Validación de parámetros
-        if (orderId == null || correlationId == null || eventId == null) {
-            return Mono.error(new IllegalArgumentException("orderId, correlationId, and eventId cannot be null"));
+        if (orderId == null || correlationId == null || eventId == null || externalReference == null) {
+            return Mono.error(new IllegalArgumentException("orderId, correlationId, eventId and externalReference cannot be null"));
         }
 
         Map<String, String> context = ReactiveUtils.createContext(
                 "orderId", orderId.toString(),
                 "correlationId", correlationId,
                 "eventId", eventId,
-                "operation", "createOrder"
+                "operation", "createOrder",
+                "externalReference", externalReference
         );
 
         Tag correlationTag = Tag.of("correlation_id", correlationId);
@@ -235,8 +243,7 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
                                     log.info("Event {} already processed, retrieving existing order", eventId);
                                     return findExistingOrder(orderId);
                                 }
-
-                                OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, "pending");
+                                OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity);
 
                                 // Transacción atómica para insertarla en BD
                                 return transactionalOperator.transactional(
@@ -258,7 +265,7 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
                                             timer.stop(meterRegistry.timer("saga.order.creation.time",
                                                     "result", "error"));
                                         })
-                                        .onErrorResume(e -> handleCreateOrderError(orderId, correlationId, eventId, e));
+                                        .onErrorResume(e -> handleCreateOrderError(orderId, correlationId, eventId, externalReference, e));
                             });
                 },
                 meterRegistry,
@@ -394,11 +401,7 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
                     reason, externalReference);
 
             OrderFailedEvent event = new OrderFailedEvent(
-                    orderId, correlationId, eventId, "processOrder", reason);
-
-            if (externalReference != null && !externalReference.isEmpty()) {
-                event.setExternalReference(externalReference);
-            }
+                    orderId, correlationId, eventId, "processOrder", reason, externalReference);
 
             // Registrar el evento fallido en base de datos para trazabilidad
             return databaseClient.sql(

@@ -6,11 +6,13 @@ import com.example.order.domain.Order;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
+import com.example.order.events.StockReservedEvent;
 import com.example.order.model.SagaStep;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
+import io.micrometer.core.instrument.Tags;  // Añadir este import
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,6 +67,52 @@ public abstract class RobustBaseSagaOrchestrator {
     }
 
     /**
+     * Maneja un error en un paso de saga con clasificación de errores y estrategia de recuperación
+     */
+    protected Mono<OrderEvent> handleStepError(SagaStep step, Throwable e, CompensationManager compensationManager) {
+        if (step == null) {
+            return Mono.error(new IllegalArgumentException("SagaStep cannot be null"));
+        }
+
+        if (compensationManager == null) {
+            log.error("CompensationManager is null, cannot execute compensation for step {}",
+                    step.getName());
+            return Mono.error(e);
+        }
+
+        ErrorType errorType = classifyError(e);
+
+        log.error("Step {} failed with error type {}: {}",
+                step.getName(), errorType, e.getMessage(), e);
+
+        OrderFailedEvent failedEvent = new OrderFailedEvent(
+                step.getOrderId(),
+                step.getCorrelationId(),
+                step.getEventId(),
+                step.getName(),
+                String.format("%s: %s [Type: %s]", e.getClass().getSimpleName(), e.getMessage(), errorType).toString(),
+                step.getExternalReference());
+
+        // Actualizar métrica de errores con tipo
+        meterRegistry.counter("saga.step.error",
+                "step", step.getName(),
+                "error_type", errorType.name(),
+                "exception", e.getClass().getSimpleName()).increment();
+
+        // Para errores transitorios, podemos reintentar antes de compensar
+        if (errorType == ErrorType.TRANSIENT) {
+            // La lógica de reintento debería manejarse más arriba en el flujo
+            // Aquí solo manejamos el error después de reintentos
+            log.warn("Transient error in step {} after retries exhausted", step.getName());
+        }
+
+        return publishFailedEvent(failedEvent)
+                .then(executeRobustCompensation(step, compensationManager))
+                .then(recordStepFailure(step, e, errorType))
+                .then(Mono.error(e));
+    }
+
+    /**
      * Crea un paso de reserva de stock con validación reforzada
      */
     protected SagaStep createReserveStockStep(
@@ -72,7 +120,8 @@ public abstract class RobustBaseSagaOrchestrator {
             Long orderId,
             int quantity,
             String correlationId,
-            String eventId) {
+            String eventId,
+            String externalReference) {
 
         if (inventoryService == null) {
             throw new IllegalArgumentException("InventoryService cannot be null");
@@ -95,7 +144,7 @@ public abstract class RobustBaseSagaOrchestrator {
                 .compensation(() -> inventoryService.releaseStock(orderId, quantity)
                         .timeout(SAGA_STEP_TIMEOUT)
                         .retryWhen(createTransientErrorRetrySpec("releaseStock-compensation")))
-                .successEvent(eventSuccessId -> new StockReservedEvent(orderId, correlationId, eventId, quantity))
+                .successEvent(eventSuccessId -> new StockReservedEvent(orderId, correlationId, eventId, externalReference,quantity))
                 .orderId(orderId)
                 .correlationId(correlationId)
                 .eventId(eventId)
@@ -133,11 +182,11 @@ public abstract class RobustBaseSagaOrchestrator {
                     .then()
                     .doOnSuccess(v -> {
                         log.info("Updated order {} status to {}", orderId, status);
-                        timer.stop(meterRegistry.timer("saga.order.status.update", tags));
+                        timer.stop(meterRegistry.timer("saga.order.status.update", Tags.of(tags))); // Usar Tags.of()
                     })
                     .doOnError(e -> {
                         log.error("Failed to update order {} status: {}", orderId, e.getMessage(), e);
-                        meterRegistry.counter("saga.order.status.error", tags).increment();
+                        meterRegistry.counter("saga.order.status.error", Tags.of(tags)).increment(); // Usar Tags.of()
                     })
                     .timeout(DB_OPERATION_TIMEOUT)
                     .retryWhen(createDatabaseRetrySpec("updateOrderStatus"))
@@ -161,51 +210,6 @@ public abstract class RobustBaseSagaOrchestrator {
                     log.warn("Failed to insert status audit log, continuing: {}", e.getMessage());
                     return Mono.empty(); // No interrumpimos el flujo principal
                 });
-    }
-
-    /**
-     * Maneja un error en un paso de saga con clasificación de errores y estrategia de recuperación
-     */
-    protected Mono<OrderEvent> handleStepError(SagaStep step, Throwable e, CompensationManager compensationManager) {
-        if (step == null) {
-            return Mono.error(new IllegalArgumentException("SagaStep cannot be null"));
-        }
-
-        if (compensationManager == null) {
-            log.error("CompensationManager is null, cannot execute compensation for step {}",
-                    step.getName());
-            return Mono.error(e);
-        }
-
-        ErrorType errorType = classifyError(e);
-
-        log.error("Step {} failed with error type {}: {}",
-                step.getName(), errorType, e.getMessage(), e);
-
-        OrderFailedEvent failedEvent = new OrderFailedEvent(
-                step.getOrderId(),
-                step.getCorrelationId(),
-                step.getEventId(),
-                step.getName(),
-                String.format("%s: %s [Type: %s]", e.getClass().getSimpleName(), e.getMessage(), errorType));
-
-        // Actualizar métrica de errores con tipo
-        meterRegistry.counter("saga.step.error",
-                "step", step.getName(),
-                "error_type", errorType.name(),
-                "exception", e.getClass().getSimpleName()).increment();
-
-        // Para errores transitorios, podemos reintentar antes de compensar
-        if (errorType == ErrorType.TRANSIENT) {
-            // La lógica de reintento debería manejarse más arriba en el flujo
-            // Aquí solo manejamos el error después de reintentos
-            log.warn("Transient error in step {} after retries exhausted", step.getName());
-        }
-
-        return publishFailedEvent(failedEvent)
-                .then(executeRobustCompensation(step, compensationManager))
-                .then(recordStepFailure(step, e, errorType))
-                .then(Mono.error(e));
     }
 
     /**
@@ -476,7 +480,7 @@ public abstract class RobustBaseSagaOrchestrator {
     /**
      * Maneja un error al crear una orden con clasificación de errores
      */
-    protected Mono<Order> handleCreateOrderError(Long orderId, String correlationId, String eventId, Throwable e) {
+    protected Mono<Order> handleCreateOrderError(Long orderId, String correlationId, String eventId, String externalReference, Throwable e) {
         ErrorType errorType = classifyError(e);
 
         log.error("Error creating order {}: {} [Type: {}]",
@@ -487,8 +491,12 @@ public abstract class RobustBaseSagaOrchestrator {
                 "error_class", e.getClass().getSimpleName()).increment();
 
         OrderFailedEvent failedEvent = new OrderFailedEvent(
-                orderId, correlationId, eventId, "createOrder",
-                String.format("%s: %s [Type: %s]", e.getClass().getSimpleName(), e.getMessage(), errorType));
+                orderId,
+                correlationId,
+                eventId,
+                "createOrder",
+                String.format("%s: %s [Type: %s]", e.getClass().getSimpleName(), e.getMessage(), errorType),
+                externalReference);
 
         return publishFailedEvent(failedEvent)
                 .then(recordStepFailure(createDummyStepForError("createOrder", orderId, correlationId, eventId), e, errorType))
@@ -547,13 +555,13 @@ public abstract class RobustBaseSagaOrchestrator {
                                     .doOnSuccess(v -> {
                                         log.info("Published event {} for step {}", event.getEventId(), step);
                                         saveEventHistory(event, step, "SUCCESS").subscribe();
-                                        timer.stop(meterRegistry.timer("saga.event.publish.time", tags));
+                                        timer.stop(meterRegistry.timer("saga.event.publish.time", Tags.of(tags))); // Usar Tags.of()
                                     })
                                     .doOnError(e -> {
                                         log.error("Failed to publish event {} for step {}: {}",
                                                 event.getEventId(), step, e.getMessage(), e);
                                         saveEventHistory(event, step, "FAILURE: " + e.getMessage()).subscribe();
-                                        meterRegistry.counter("saga.event.publish.error", tags).increment();
+                                        meterRegistry.counter("saga.event.publish.error", Tags.of(tags)).increment(); // Usar Tags.of()
                                     }));
                 },
                 meterRegistry,

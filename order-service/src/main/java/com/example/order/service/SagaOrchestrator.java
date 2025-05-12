@@ -8,7 +8,11 @@ import reactor.core.publisher.Mono;
 
 public interface SagaOrchestrator {
     Mono<Order> executeOrderSaga(int quantity, double amount);
-    Mono<Order> createOrder(Long orderId, String correlationId, String eventId);
+
+    // Both method signatures needed for backward compatibility
+    Mono<Order> createOrder(Long orderId, String correlationId, String eventId, String externalReference);
+    Mono<Order> createOrder(Long orderId, String correlationId, String eventId, String externalReference, int quantity);
+
     Mono<OrderEvent> executeStep(SagaStep step);
     Mono<Void> publishFailedEvent(OrderFailedEvent event);
     Mono<OrderEvent> publishEvent(OrderEvent event, String step, String topic);
