@@ -16,6 +16,10 @@ management:
     web:
       exposure:
         include: health,metrics,prometheus
+order:
+  service:
+    strategy:
+      default-strategy: atLeastOnce
 
 redis:
   retry:

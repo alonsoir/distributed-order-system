@@ -71,7 +71,7 @@ class SagaOrchestratorUnitTest {
     private Timer.Sample timerSample;
 
     @InjectMocks
-    private SagaOrchestratorImpl sagaOrchestrator;
+    private SagaOrchestratorAtLeastOnceImpl sagaOrchestrator;
 
     private static final Long ORDER_ID = 1234L;
     private static final String CORRELATION_ID = "corr-123";

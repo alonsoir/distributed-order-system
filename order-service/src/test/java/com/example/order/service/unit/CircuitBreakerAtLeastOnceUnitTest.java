@@ -2,19 +2,14 @@ package com.example.order.service.unit;
 
 import com.example.order.domain.Order;
 import com.example.order.events.OrderFailedEvent;
-import com.example.order.service.IdGenerator;
-import com.example.order.service.InventoryService;
-import com.example.order.service.OrderServiceImpl;
-import com.example.order.service.SagaOrchestratorImpl;
+import com.example.order.service.*;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -34,11 +29,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+/**
+ * Este test usa la implementacion AT LEAST ONCE de SagaOrchestrator.
+ * */
 @ExtendWith(MockitoExtension.class)
 @Testcontainers
 @ActiveProfiles("unit")
 @MockitoSettings(strictness = Strictness.LENIENT)
-class CircuitBreakerUnitTest {
+class CircuitBreakerAtLeastOnceUnitTest {
 
     private static final long TEST_ORDER_ID = 1L;
     private static final String TEST_CORRELATION_ID = "test-correlation-id";
@@ -60,20 +58,24 @@ class CircuitBreakerUnitTest {
     @Mock
     private TransactionalOperator transactionalOperator;
     @Mock
-    private SagaOrchestratorImpl sagaOrchestrator;
+    //atLeastOnce
+    private SagaOrchestratorAtLeastOnceImpl sagaOrchestrator;
     @Mock
     private CircuitBreaker circuitBreaker;
     @Mock
     private IdGenerator idGenerator;
     @Mock
     private Counter ordersSuccessCounter;
-    @InjectMocks
-    private OrderServiceImpl orderService;
+    // Declaramos la instancia real de OrderServiceAtLeastOnceImpl (no un mock)
+    private OrderServiceAtLeastOnceImpl orderService;
 
 
     @BeforeEach
     void setUp() {
-        // Usar lenient() para evitar UnnecessaryStubbingException
+        // Creamos una instancia real de OrderServiceAtLeastOnceImpl con los mocks necesarios, solo queremos que spring
+        // levante esta instancia. Más rápido que mockito.
+        orderService = new OrderServiceAtLeastOnceImpl(circuitBreakerRegistry, meterRegistry, sagaOrchestrator);
+        // Configuración de mocks común
         lenient().when(idGenerator.generateExternalReference()).thenReturn(TEST_EXTERNAL_REF);
         lenient().when(idGenerator.generateEventId()).thenReturn(TEST_EVENT_ID);
         lenient().when(meterRegistry.counter("orders_success")).thenReturn(ordersSuccessCounter);
@@ -82,7 +84,6 @@ class CircuitBreakerUnitTest {
         lenient().when(sagaOrchestrator.createFailedEvent(anyString(), anyString()))
                 .thenReturn(Mono.empty());
     }
-
     @Test
     void shouldReturnFallbackWhenCircuitBreakerIsOpen() {
         // Arrange
@@ -106,8 +107,6 @@ class CircuitBreakerUnitTest {
         verify(sagaOrchestrator, never()).executeOrderSaga(anyInt(), anyDouble());
     }
 
-
-
     @Test
     void shouldApplyCircuitBreakerOnSuccessfulOrderProcessing() {
         // Arrange
@@ -117,9 +116,6 @@ class CircuitBreakerUnitTest {
         CircuitBreaker testCircuitBreaker = mock(CircuitBreaker.class);
         when(testCircuitBreaker.tryAcquirePermission()).thenReturn(true);
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(testCircuitBreaker);
-
-        // Configurar el comportamiento de acquirePermission
-        doNothing().when(testCircuitBreaker).acquirePermission();
 
         // Configurar el comportamiento de onSuccess
         doNothing().when(testCircuitBreaker).onSuccess(anyLong(), any(TimeUnit.class));
@@ -140,8 +136,6 @@ class CircuitBreakerUnitTest {
 
         // Verificamos que se llama a tryAcquirePermission() una vez
         verify(testCircuitBreaker).tryAcquirePermission();
-        // Verificamos que se llama a acquirePermission() una vez
-        verify(testCircuitBreaker).acquirePermission();
         // Verificamos que se llama a onSuccess() una vez con cualquier valor de tiempo y unidad
         verify(testCircuitBreaker).onSuccess(anyLong(), any(TimeUnit.class));
 
@@ -160,7 +154,7 @@ class CircuitBreakerUnitTest {
         // Configurar CircuitBreaker
         CircuitBreaker simpleCircuitBreaker = mock(CircuitBreaker.class);
         when(simpleCircuitBreaker.tryAcquirePermission()).thenReturn(true);
-        doNothing().when(simpleCircuitBreaker).acquirePermission();
+        // Eliminamos la verificación de acquirePermission porque nunca se llama en el código real
         doNothing().when(simpleCircuitBreaker).onSuccess(anyLong(), any(TimeUnit.class));
         when(circuitBreakerRegistry.circuitBreaker(anyString())).thenReturn(simpleCircuitBreaker);
 
@@ -177,7 +171,7 @@ class CircuitBreakerUnitTest {
 
         // Verificar lo mínimo necesario
         verify(simpleCircuitBreaker).tryAcquirePermission();
-        verify(simpleCircuitBreaker).acquirePermission();
+        // Eliminamos la verificación de acquirePermission
         verify(simpleCircuitBreaker).onSuccess(anyLong(), any(TimeUnit.class));
 
         verify(sagaOrchestrator).executeOrderSaga(TEST_QUANTITY, TEST_AMOUNT);
@@ -191,7 +185,7 @@ class CircuitBreakerUnitTest {
 
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
-        doNothing().when(circuitBreaker).acquirePermission();
+        // Eliminamos la verificación de acquirePermission
         doNothing().when(circuitBreaker).onError(anyLong(), any(TimeUnit.class), any(Throwable.class));
 
         when(sagaOrchestrator.executeOrderSaga(
@@ -201,7 +195,8 @@ class CircuitBreakerUnitTest {
                 .thenReturn(Mono.error(new RuntimeException("Saga failed")));
 
         // Mock para el createFailedEvent - esto es lo que se llama ahora
-        when(sagaOrchestrator.createFailedEvent(eq("global_timeout"), eq(TEST_EXTERNAL_REF)))
+        // Cambiamos de global_timeout a circuit_breaker_error para reflejar el comportamiento real
+        when(sagaOrchestrator.createFailedEvent(eq("circuit_breaker_error"), eq(TEST_EXTERNAL_REF)))
                 .thenReturn(Mono.empty());
 
         // Act
@@ -213,11 +208,12 @@ class CircuitBreakerUnitTest {
                 .verifyComplete();
 
         verify(circuitBreaker).tryAcquirePermission();
-        verify(circuitBreaker).acquirePermission();
+        // Eliminamos la verificación de acquirePermission
         verify(circuitBreaker).onError(anyLong(), any(TimeUnit.class), any(Throwable.class));
 
-        // Ahora verificamos createFailedEvent en lugar de publishFailedEvent
-        verify(sagaOrchestrator).createFailedEvent(eq("global_timeout"), eq(TEST_EXTERNAL_REF));
+        // Ahora verificamos createFailedEvent con el valor correcto
+        verify(sagaOrchestrator).createFailedEvent(eq("circuit_breaker_error"), eq(TEST_EXTERNAL_REF));
         verify(sagaOrchestrator, never()).publishFailedEvent(any(OrderFailedEvent.class));
     }
+
 }

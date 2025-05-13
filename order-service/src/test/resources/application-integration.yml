@@ -18,6 +18,10 @@ management:
     web:
       exposure:
         include: prometheus,health
+order:
+  service:
+    strategy:
+      default-strategy: atLeastOnce
 
 redis:
   retry:

@@ -46,6 +46,11 @@ server:
     max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:1000}
     accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:100}
 
+order:
+  service:
+    strategy:
+      default-strategy: atLeastOnce
+
 redis:
   retry:
     max-attempts: ${REDIS_RETRY_MAX_ATTEMPTS:3}

@@ -1,25 +1,22 @@
 package com.example.order.service;
 
 import com.example.order.domain.Order;
-import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
-import java.util.concurrent.TimeUnit;
-
-@Service
-public class OrderServiceImpl extends AbstractOrderService implements OrderService {
-    private static final Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
+@Service("atLeastOnce")
+public class OrderServiceAtLeastOnceImpl extends AbstractOrderService implements OrderService {
+    private static final Logger log = LoggerFactory.getLogger(OrderServiceAtLeastOnceImpl.class);
     private final SagaOrchestrator sagaOrchestrator;
 
-    public OrderServiceImpl(CircuitBreakerRegistry circuitBreakerRegistry,
-                            MeterRegistry meterRegistry,
-                            SagaOrchestrator sagaOrchestrator) {
+    public OrderServiceAtLeastOnceImpl(CircuitBreakerRegistry circuitBreakerRegistry,
+                                       MeterRegistry meterRegistry,
+                                       @Qualifier("atLeastOnce") SagaOrchestrator sagaOrchestrator) {
         super(circuitBreakerRegistry, meterRegistry);
         this.sagaOrchestrator = sagaOrchestrator;
     }

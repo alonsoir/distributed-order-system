@@ -25,17 +25,17 @@ import java.util.concurrent.atomic.AtomicReference;
 import jakarta.annotation.PostConstruct;
 
 /**
- * Implementación robusta del orquestador de sagas
+ * Implementación robusta AT MOST ONCE del orquestador de sagas
  */
 @Slf4j
 @Component("sagaOrchestratorImpl2")
 @Qualifier("sagaOrchestratorImpl2")
-public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements SagaOrchestrator {
+public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator implements SagaOrchestrator {
 
     private final InventoryService inventoryService;
     private final CompensationManager compensationManager;
 
-    public SagaOrchestratorImpl2(
+    public SagaOrchestratorAtMostOnceImpl2(
             DatabaseClient databaseClient,
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
@@ -71,7 +71,7 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
         meterRegistry.gauge("saga.health.stock_reservation_success_rate",
                 this, o -> o.getSuccessRate("reserveStock"));
 
-        log.info("SagaOrchestratorImpl2 initialized with robust configuration");
+        log.info("SagaOrchestratorAtMostOnceImpl2 initialized with robust configuration");
     }
 
     /**
@@ -203,13 +203,6 @@ public class SagaOrchestratorImpl2 extends RobustBaseSagaOrchestrator implements
                     log.error("Failed to record saga failure: {}", e.getMessage());
                     return Mono.empty();
                 });
-    }
-
-    // For backward compatibility
-    @Override
-    public Mono<Order> createOrder(Long orderId, String correlationId, String eventId, String externalReference) {
-        // Use default quantity if not provided
-        return createOrder(orderId, correlationId, eventId, externalReference, 1);
     }
 
     @Override

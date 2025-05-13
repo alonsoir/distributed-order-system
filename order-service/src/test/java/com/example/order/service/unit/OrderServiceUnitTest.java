@@ -19,14 +19,13 @@ import org.springframework.test.context.ActiveProfiles;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
-import java.time.Duration;
 import java.util.stream.Stream;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Unit tests for {@link OrderServiceImpl}.
+ * Unit tests for {@link OrderServiceAtLeastOnceImpl}.
  * Tests cover order processing with valid and invalid inputs,
  * circuit breaker behaviors, and error handling.
  */
@@ -62,7 +61,7 @@ class OrderServiceUnitTest {
     private Counter ordersSuccessCounter;
 
     @InjectMocks
-    private OrderServiceImpl orderService;
+    private OrderServiceAtLeastOnceImpl orderService;
 
     @BeforeEach
     void setUp() {

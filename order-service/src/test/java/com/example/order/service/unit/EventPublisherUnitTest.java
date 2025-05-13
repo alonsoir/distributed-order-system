@@ -85,6 +85,7 @@ class EventPublisherUnitTest {
         // Marcar como contexto de prueba para filtrar logs según configuración de logback-test.xml
         MDC.put("testContext", "true");
 
+        // Crear una implementación de OrderEvent que incluya getExternalReference
         orderEvent = new OrderEvent() {
             private final String testEventId = UUID.randomUUID().toString();
 
@@ -106,6 +107,11 @@ class EventPublisherUnitTest {
             @Override
             public Long getOrderId() {
                 return 123456L;
+            }
+
+            @Override
+            public String getExternalReference() {
+                return "test-external-ref";
             }
 
             @Override
@@ -415,6 +421,11 @@ class EventPublisherUnitTest {
             @Override
             public Long getOrderId() {
                 return 123456L;
+            }
+
+            @Override
+            public String getExternalReference() {
+                return "test-external-ref";
             }
 
             @Override

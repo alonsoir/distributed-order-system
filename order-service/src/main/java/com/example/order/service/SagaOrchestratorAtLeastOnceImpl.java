@@ -22,12 +22,13 @@ import java.util.Map;
 
 @Slf4j
 @Component
-public class SagaOrchestratorImpl extends BaseSagaOrchestrator implements SagaOrchestrator {
+@Qualifier("atLeastOnce")
+public class SagaOrchestratorAtLeastOnceImpl extends BaseSagaOrchestrator implements SagaOrchestrator {
 
     private final InventoryService inventoryService;
     private final CompensationManager compensationManager;
 
-    public SagaOrchestratorImpl(
+    public SagaOrchestratorAtLeastOnceImpl(
             DatabaseClient databaseClient,
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,

@@ -25,7 +25,7 @@ public class SagaConfiguration {
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
             CompensationManager compensationManager) {
-        return new SagaOrchestratorImpl2(
+        return new SagaOrchestratorAtMostOnceImpl2(
                 databaseClient,
                 transactionalOperator,
                 meterRegistry,
@@ -48,7 +48,7 @@ public class SagaConfiguration {
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
             CompensationManager compensationManager) {
-        return new SagaOrchestratorImpl(
+        return new SagaOrchestratorAtLeastOnceImpl(
                 databaseClient,
                 transactionalOperator,
                 meterRegistry,

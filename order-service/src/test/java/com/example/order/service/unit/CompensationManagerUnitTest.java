@@ -1,6 +1,7 @@
 package com.example.order.service.unit;
 
 import com.example.order.events.OrderEvent;
+import com.example.order.events.OrderEventType;
 import com.example.order.model.SagaStep;
 import com.example.order.service.CompensationManagerImpl;
 import com.example.order.service.CompensationTask;
@@ -34,6 +35,7 @@ class CompensationManagerUnitTest {
     private static final String TEST_CORRELATION_ID = "test-correlation-id";
     private static final String TEST_EVENT_ID = "test-event-id";
     private static final String TEST_STEP_NAME = "testStep";
+    private static final String TEST_EXTERNAL_REF = "test-external-ref"; // Añadido external reference
     private static final String COMPENSATION_TIMER = "saga_compensation_timer";
     private static final String COMPENSATION_RETRY_COUNTER = "saga_compensation_retry";
     private static final String COMPENSATION_DLQ_KEY = "failed-compensations";
@@ -78,7 +80,7 @@ class CompensationManagerUnitTest {
     @Test
     void shouldExecuteCompensationSuccessfully() {
         // Arrange
-        SagaStep step = createSagaStep(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, TEST_STEP_NAME, false);
+        SagaStep step = createSagaStep(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, TEST_STEP_NAME, TEST_EXTERNAL_REF, false);
 
         // Act
         Mono<Void> result = compensationManager.executeCompensation(step);
@@ -93,7 +95,7 @@ class CompensationManagerUnitTest {
     @Test
     void shouldHandleCompensationFailure() {
         // Arrange
-        SagaStep step = createSagaStep(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, TEST_STEP_NAME, true);
+        SagaStep step = createSagaStep(TEST_ORDER_ID, TEST_CORRELATION_ID, TEST_EVENT_ID, TEST_STEP_NAME, TEST_EXTERNAL_REF, true);
 
         // Act
         Mono<Void> result = compensationManager.executeCompensation(step);
@@ -130,7 +132,8 @@ class CompensationManagerUnitTest {
                 eventId -> mockOrderEvent,
                 TEST_ORDER_ID,
                 TEST_CORRELATION_ID,
-                TEST_EVENT_ID
+                TEST_EVENT_ID,
+                TEST_EXTERNAL_REF  // Agregado el external reference que faltaba
         );
 
         // Act
@@ -142,7 +145,8 @@ class CompensationManagerUnitTest {
                 .verify();
     }
 
-    private SagaStep createSagaStep(Long orderId, String correlationId, String eventId, String stepName, boolean shouldFail) {
+    private SagaStep createSagaStep(Long orderId, String correlationId, String eventId,
+                                    String stepName, String externalRef, boolean shouldFail) {
         // Crear un supplier para la compensación que puede fallar si se solicita
         Supplier<Mono<Void>> compensationSupplier = () -> {
             if (shouldFail) {
@@ -161,6 +165,7 @@ class CompensationManagerUnitTest {
                 .orderId(orderId)
                 .correlationId(correlationId)
                 .eventId(eventId)
+                .externalReference(externalRef)  // Añadido external reference
                 .build();
     }
 
