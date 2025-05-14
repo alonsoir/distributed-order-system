@@ -1,4 +1,9 @@
 spring:
+  cloud:
+    config:
+      enabled: false
+      import-check:
+        enabled: false
   main:
     allow-bean-definition-overriding: true
   r2dbc:
@@ -11,8 +16,8 @@ spring:
       port: ${SPRING_DATA_REDIS_PORT:6379}
   sql:
     init:
-      mode: never
-
+      mode: always
+      schema-locations: classpath:schema-h2.sql
 management:
   endpoints:
     web:

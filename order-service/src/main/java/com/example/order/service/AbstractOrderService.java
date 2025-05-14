@@ -31,6 +31,10 @@ public abstract class AbstractOrderService {
         if (externalReference == null || externalReference.trim().isEmpty()) {
             return Mono.error(new IllegalArgumentException("External reference cannot be null or empty"));
         }
+        // Asçi está en schema-tables.sql
+        if (externalReference.length() > 36) {
+            return Mono.error(new IllegalArgumentException("External reference cannot be longer than 36 characters"));
+        }
         if (quantity <= 0) {
             return Mono.error(new IllegalArgumentException("Quantity must be positive"));
         }

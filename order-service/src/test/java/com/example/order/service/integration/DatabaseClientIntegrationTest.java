@@ -2,6 +2,8 @@ package com.example.order.service.integration;
 
 import com.example.order.domain.Order;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -12,17 +14,27 @@ import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Duration;
 import java.util.Arrays;
+import java.util.UUID;
 
 @DataR2dbcTest
 @Testcontainers
 @ActiveProfiles("integration")
+@TestPropertySource(properties = {
+        "spring.cloud.config.enabled=false"
+})
 class DatabaseClientIntegrationTest {
 
     @Container
@@ -31,7 +43,7 @@ class DatabaseClientIntegrationTest {
                     .withDatabaseName("orders")
                     .withUsername("root")
                     .withPassword("root")
-                    .withInitScript("schema.sql");
+                    .withInitScript("schema-tables.sql"); // Solo usar el script de tablas aquí
 
     @Autowired
     private ApplicationContext context;
@@ -48,12 +60,87 @@ class DatabaseClientIntegrationTest {
         r.add("spring.r2dbc.password", mysql::getPassword);
     }
 
+    @BeforeAll
+    static void setupProcedures() {
+        try {
+            // Crear procedimientos almacenados después de que el contenedor haya iniciado
+            String jdbcUrl = mysql.getJdbcUrl();
+            try (Connection conn = DriverManager.getConnection(jdbcUrl, mysql.getUsername(), mysql.getPassword());
+                 Statement stmt = conn.createStatement()) {
+
+                // Procedimiento insert_outbox
+                stmt.execute("CREATE PROCEDURE IF NOT EXISTS insert_outbox(\n" +
+                        "    IN p_event_type VARCHAR(50),\n" +
+                        "    IN p_correlation_id VARCHAR(36),\n" +
+                        "    IN p_event_id VARCHAR(36),\n" +
+                        "    IN p_payload TEXT\n" +
+                        ")\n" +
+                        "BEGIN\n" +
+                        "    DECLARE topic VARCHAR(255);\n" +
+                        "    SET topic = CONCAT('order.', LOWER(p_event_type));\n" +
+                        "\n" +
+                        "    INSERT INTO outbox (event_type, correlation_id, event_id, payload, topic)\n" +
+                        "    VALUES (p_event_type, p_correlation_id, p_event_id, p_payload, topic);\n" +
+                        "END");
+
+                // Procedimiento try_acquire_lock
+                stmt.execute("CREATE PROCEDURE IF NOT EXISTS try_acquire_lock(\n" +
+                        "    IN p_resource_id VARCHAR(100),\n" +
+                        "    IN p_correlation_id VARCHAR(36),\n" +
+                        "    IN p_timeout_seconds INT,\n" +
+                        "    OUT result BOOLEAN\n" +
+                        ")\n" +
+                        "BEGIN\n" +
+                        "    DECLARE lock_count INT;\n" +
+                        "\n" +
+                        "    -- Verificar si el recurso ya está bloqueado\n" +
+                        "    SELECT COUNT(*) INTO lock_count\n" +
+                        "    FROM transaction_locks\n" +
+                        "    WHERE resource_id = p_resource_id\n" +
+                        "      AND released = FALSE\n" +
+                        "      AND expires_at > NOW();\n" +
+                        "\n" +
+                        "    IF lock_count = 0 THEN\n" +
+                        "        -- El recurso está disponible, adquirimos lock\n" +
+                        "        INSERT INTO transaction_locks (resource_id, correlation_id, locked_at, expires_at)\n" +
+                        "        VALUES (p_resource_id, p_correlation_id, NOW(), DATE_ADD(NOW(), INTERVAL p_timeout_seconds SECOND));\n" +
+                        "\n" +
+                        "        SET result = TRUE;\n" +
+                        "    ELSE\n" +
+                        "        -- El recurso ya está bloqueado\n" +
+                        "        SET result = FALSE;\n" +
+                        "    END IF;\n" +
+                        "END");
+
+                // Procedimiento release_lock
+                stmt.execute("CREATE PROCEDURE IF NOT EXISTS release_lock(\n" +
+                        "    IN p_resource_id VARCHAR(100),\n" +
+                        "    IN p_correlation_id VARCHAR(36)\n" +
+                        ")\n" +
+                        "BEGIN\n" +
+                        "    UPDATE transaction_locks\n" +
+                        "    SET released = TRUE\n" +
+                        "    WHERE resource_id = p_resource_id\n" +
+                        "      AND correlation_id = p_correlation_id;\n" +
+                        "END");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("Error initializing stored procedures", e);
+        }
+    }
+
+    @BeforeEach
+    void setup() {
+        // Ensure database is ready and tables exist
+        databaseClient.sql("SELECT 1").fetch().one().block(Duration.ofSeconds(5));
+    }
+
     @AfterEach
     void cleanup() {
-        databaseClient
-                .sql("DELETE FROM orders")
-                .then()
-                .block();
+        // Clean up tables
+        databaseClient.sql("DELETE FROM outbox").then().block();
+        databaseClient.sql("DELETE FROM transaction_locks").then().block();
+        databaseClient.sql("DELETE FROM orders").then().block();
     }
 
     @Test
@@ -93,6 +180,82 @@ class DatabaseClientIntegrationTest {
                                 o.status().equals(status) &&
                                 o.correlationId().equals(corr)
                 )
+                .verifyComplete();
+    }
+
+    @Test
+    void testInsertOutboxProcedure() {
+        String eventType = "ORDER_CREATED";
+        String correlationId = UUID.randomUUID().toString();
+        String eventId = UUID.randomUUID().toString();
+        String payload = "{\"orderId\": 1, \"status\": \"CREATED\"}";
+
+        // Llamar al procedimiento almacenado para insertar en outbox
+        Mono<Void> callProcedure = databaseClient
+                .sql("CALL insert_outbox(?, ?, ?, ?)")
+                .bind(0, eventType)
+                .bind(1, correlationId)
+                .bind(2, eventId)
+                .bind(3, payload)
+                .then();
+
+        // Verificar que se insertó correctamente
+        Mono<Boolean> verifyInsert = databaseClient
+                .sql("SELECT COUNT(*) FROM outbox WHERE event_id = :eventId")
+                .bind("eventId", eventId)
+                .map(row -> row.get(0, Integer.class) > 0)
+                .one();
+
+        StepVerifier.create(callProcedure.then(verifyInsert))
+                .expectNext(true)
+                .verifyComplete();
+    }
+
+    @Test
+    void testAcquireAndReleaseLock() {
+        String resourceId = UUID.randomUUID().toString();
+        String correlationId = UUID.randomUUID().toString();
+        int timeoutSeconds = 30;
+
+        // Adquirir un lock, ojito que el procedimiento devuelve un entero que indica si se adquirió el lock.
+        // 1 indica que se adquirió el lock, 0 indica que no se adquirió el lock. Debería ser un booleano.
+        // Pero MYSQL no soporta booleanos en los procedimientos almacenados.
+        Mono<Boolean> acquireLock = databaseClient
+                .sql("CALL try_acquire_lock(?, ?, ?, @result); SELECT @result;")
+                .bind(0, resourceId)
+                .bind(1, correlationId)
+                .bind(2, timeoutSeconds)
+                .map(row -> row.get(0, Integer.class) == 1) // Changed from Boolean.class to Integer.class
+                .one();
+
+        // Verificar que el lock se adquirió correctamente
+        Mono<Boolean> verifyLock = databaseClient
+                .sql("SELECT COUNT(*) FROM transaction_locks WHERE resource_id = :resourceId AND correlation_id = :correlationId AND released = FALSE")
+                .bind("resourceId", resourceId)
+                .bind("correlationId", correlationId)
+                .map(row -> row.get(0, Integer.class) > 0)
+                .one();
+
+        // Liberar el lock
+        Mono<Void> releaseLock = databaseClient
+                .sql("CALL release_lock(?, ?)")
+                .bind(0, resourceId)
+                .bind(1, correlationId)
+                .then();
+
+        // Verificar que el lock se liberó correctamente
+        Mono<Boolean> verifyRelease = databaseClient
+                .sql("SELECT released FROM transaction_locks WHERE resource_id = :resourceId AND correlation_id = :correlationId")
+                .bind("resourceId", resourceId)
+                .bind("correlationId", correlationId)
+                .map(row -> row.get("released", Boolean.class))
+                .one();
+
+        StepVerifier.create(acquireLock
+                        .then(verifyLock)
+                        .then(releaseLock)
+                        .then(verifyRelease))
+                .expectNext(true)
                 .verifyComplete();
     }
 
