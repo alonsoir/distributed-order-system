@@ -7,6 +7,7 @@ import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.model.SagaStep;
+import com.example.order.model.SagaStepType;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -394,7 +395,12 @@ public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator 
                     reason, externalReference);
 
             OrderFailedEvent event = new OrderFailedEvent(
-                    orderId, correlationId, eventId, "processOrder", reason, externalReference);
+                    orderId,
+                    correlationId,
+                    eventId,
+                    SagaStepType.FAILED_ORDER,
+                    reason,
+                    externalReference);
 
             // Registrar el evento fallido en base de datos para trazabilidad
             return databaseClient.sql(

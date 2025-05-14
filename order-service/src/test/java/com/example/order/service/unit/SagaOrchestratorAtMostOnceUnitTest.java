@@ -4,6 +4,7 @@ import com.example.order.config.CircuitBreakerCategory;
 import com.example.order.domain.Order;
 import com.example.order.events.*;
 import com.example.order.model.SagaStep;
+import com.example.order.model.SagaStepType;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.service.*;
 import com.example.order.service.EventPublisher;
@@ -40,7 +41,7 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 @ActiveProfiles("unit")
-class SagaOrchestratorImpl2Test {
+class SagaOrchestratorAtMostOnceUnitTest {
 
     @Mock
     private DatabaseClient databaseClient;
@@ -568,8 +569,29 @@ class SagaOrchestratorImpl2Test {
     @Test
     void testPublishFailedEvent_Success() {
         // Crear evento de fallo
+        /**
+         * public OrderFailedEvent(Long orderId,
+         *                             String correlationId,
+         *                             String eventId,
+         *                             SagaStepType step,
+         *                             String reason,
+         *                             String externalReference)
+         */
+        /*public class OrderFailedEvent implements OrderEvent {
+    private final Long orderId;
+    private final String correlationId;
+    private final String eventId;
+    private final SagaStepType step;
+    private final String reason;
+    private final String externalReference;
+        * */
         OrderFailedEvent failedEvent = new OrderFailedEvent(
-                ORDER_ID, CORRELATION_ID, EVENT_ID, "testStep", "Test failure", EXTERNAL_REF);
+                ORDER_ID,
+                CORRELATION_ID,
+                EVENT_ID,
+                SagaStepType.FAILED_EVENT,
+                "Test failure",
+                EXTERNAL_REF);
 
         // Configurar publicación de evento exitosa
         when(eventPublisher.publishEvent(any(OrderFailedEvent.class), anyString(), anyString()))
@@ -585,7 +607,7 @@ class SagaOrchestratorImpl2Test {
         // Verificar evento publicado
         verify(eventPublisher).publishEvent(
                 eq(failedEvent),
-                eq("failedEvent"),
+                eq(SagaStepType.FAILED_EVENT.name()),
                 eq(EventTopics.ORDER_FAILED.getTopic())
         );
     }
@@ -593,8 +615,21 @@ class SagaOrchestratorImpl2Test {
     @Test
     void testPublishFailedEvent_PublishError() {
         // Crear evento de fallo
+        /*public class OrderFailedEvent implements OrderEvent {
+    private final Long orderId;
+    private final String correlationId;
+    private final String eventId;
+    private final SagaStepType step;
+    private final String reason;
+    private final String externalReference;
+        * */
         OrderFailedEvent failedEvent = new OrderFailedEvent(
-                ORDER_ID, CORRELATION_ID, EVENT_ID, "testStep", "Test failure", EXTERNAL_REF);
+                ORDER_ID,
+                CORRELATION_ID,
+                EVENT_ID,
+                SagaStepType.FAILED_EVENT,
+                "Test failure",
+                EXTERNAL_REF);
 
         // Configurar error en publicación
         RuntimeException publishException = new RuntimeException("Publish failed");

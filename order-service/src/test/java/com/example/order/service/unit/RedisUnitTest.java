@@ -28,7 +28,11 @@ import java.util.UUID;
 
 @ActiveProfiles("test")
 @SpringBootTest(
-        classes = RedisConfig.class
+        classes = RedisConfig.class,
+        properties = {
+                "spring.cloud.config.enabled=false",
+                "spring.cloud.config.import-check.enabled=false"
+        }
 )
 @ImportAutoConfiguration({
         RedisAutoConfiguration.class,

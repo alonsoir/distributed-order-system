@@ -7,6 +7,7 @@ import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.model.SagaStep;
+import com.example.order.model.SagaStepType;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -255,8 +256,7 @@ public class SagaOrchestratorAtLeastOnceImpl extends BaseSagaOrchestrator implem
 
             OrderFailedEvent event = new OrderFailedEvent(orderId,
                     correlationId,
-                    eventId,
-                    "processOrder",
+                    eventId, SagaStepType.PROCESS_ORDER,
                     reason,
                     externalReference);
             return publishFailedEvent(event);

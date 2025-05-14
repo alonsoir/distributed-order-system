@@ -5,14 +5,15 @@ import lombok.Builder;
 import lombok.Getter;
 import reactor.core.publisher.Mono;
 
-import java.util.function.Supplier;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 @Builder
 @Getter
 public class SagaStep {
     private final String name;
     private final String topic;
+    private final SagaStepType stepType; // Nuevo campo
     private final Supplier<Mono<Void>> action;
     private final Supplier<Mono<Void>> compensation;
     private final Function<String, OrderEvent> successEvent;
@@ -23,6 +24,7 @@ public class SagaStep {
 
     public SagaStep(String name,
                     String topic,
+                    SagaStepType stepType, // Nuevo parámetro
                     Supplier<Mono<Void>> action,
                     Supplier<Mono<Void>> compensation,
                     Function<String, OrderEvent> successEvent,
@@ -33,8 +35,12 @@ public class SagaStep {
         if (topic == null) {
             throw new IllegalArgumentException("Topic cannot be null");
         }
+        if (stepType == null) {
+            throw new IllegalArgumentException("StepType cannot be null");
+        }
         this.name = name;
         this.topic = topic;
+        this.stepType = stepType;
         this.action = action;
         this.compensation = compensation;
         this.successEvent = successEvent;
@@ -42,6 +48,5 @@ public class SagaStep {
         this.correlationId = correlationId;
         this.eventId = eventId;
         this.externalReference = externalReference;
-
     }
 }

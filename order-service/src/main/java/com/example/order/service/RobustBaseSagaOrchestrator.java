@@ -8,6 +8,7 @@ import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.events.StockReservedEvent;
 import com.example.order.model.SagaStep;
+import com.example.order.model.SagaStepType;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -88,7 +89,7 @@ public abstract class RobustBaseSagaOrchestrator {
                 step.getOrderId(),
                 step.getCorrelationId(),
                 step.getEventId(),
-                step.getName(),
+                SagaStepType.FAILED_EVENT,
                 String.format("%s: %s [Type: %s]", e.getClass().getSimpleName(), e.getMessage(), errorType).toString(),
                 step.getExternalReference());
 
@@ -492,8 +493,7 @@ public abstract class RobustBaseSagaOrchestrator {
         OrderFailedEvent failedEvent = new OrderFailedEvent(
                 orderId,
                 correlationId,
-                eventId,
-                "createOrder",
+                eventId, SagaStepType.CREATE_ORDER,
                 String.format("%s: %s [Type: %s]", e.getClass().getSimpleName(), e.getMessage(), errorType),
                 externalReference);
 

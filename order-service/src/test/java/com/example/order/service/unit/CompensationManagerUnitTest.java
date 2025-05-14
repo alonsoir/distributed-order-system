@@ -1,8 +1,8 @@
 package com.example.order.service.unit;
 
 import com.example.order.events.OrderEvent;
-import com.example.order.events.OrderEventType;
 import com.example.order.model.SagaStep;
+import com.example.order.model.SagaStepType;
 import com.example.order.service.CompensationManagerImpl;
 import com.example.order.service.CompensationTask;
 import io.micrometer.core.instrument.Counter;
@@ -127,13 +127,14 @@ class CompensationManagerUnitTest {
         SagaStep step = new SagaStep(
                 TEST_STEP_NAME,
                 "test-topic",
-                () -> Mono.empty(),
-                null, // compensation es null
-                eventId -> mockOrderEvent,
+                SagaStepType.UNKNOWN,      // Añadido el SagaStepType
+                () -> Mono.empty(),        // action
+                null,                      // compensation es null
+                eventId -> mockOrderEvent, // successEvent
                 TEST_ORDER_ID,
                 TEST_CORRELATION_ID,
                 TEST_EVENT_ID,
-                TEST_EXTERNAL_REF  // Agregado el external reference que faltaba
+                TEST_EXTERNAL_REF
         );
 
         // Act
@@ -155,17 +156,18 @@ class CompensationManagerUnitTest {
             return Mono.empty();
         };
 
-        // Usar correctamente el builder de SagaStep con los tipos correctos
+        // Usar correctamente el builder de SagaStep con los tipos correctos y añadir stepType
         return SagaStep.builder()
                 .name(stepName)
                 .topic("test-topic")
+                .stepType(SagaStepType.UNKNOWN)  // Añadido el SagaStepType
                 .action(() -> Mono.empty())
                 .compensation(compensationSupplier)
                 .successEvent(id -> mockOrderEvent)
                 .orderId(orderId)
                 .correlationId(correlationId)
                 .eventId(eventId)
-                .externalReference(externalRef)  // Añadido external reference
+                .externalReference(externalRef)
                 .build();
     }
 

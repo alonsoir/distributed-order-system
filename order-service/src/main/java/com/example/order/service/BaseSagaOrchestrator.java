@@ -8,6 +8,7 @@ import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.events.StockReservedEvent;
 import com.example.order.model.SagaStep;
+import com.example.order.model.SagaStepType;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -114,7 +115,7 @@ public abstract class BaseSagaOrchestrator {
                 orderId,
                 correlationId,
                 eventId,
-                "createOrder",
+                SagaStepType.CREATE_ORDER,
                 String.format("%s: %s", e.getClass().getSimpleName(), e.getMessage()),
                 externalReference
                 );
@@ -181,7 +182,7 @@ public abstract class BaseSagaOrchestrator {
                     step.getOrderId(),
                     step.getCorrelationId(),
                     step.getEventId(),
-                    step.getName(),
+                    SagaStepType.FAILED_ORDER,
                     String.format("%s: %s", errorType, errorMessage),
                     step.getExternalReference());
 
@@ -331,7 +332,7 @@ public abstract class BaseSagaOrchestrator {
                 "correlationId", event.getCorrelationId(),
                 "orderId", event.getOrderId().toString(),
                 "reason", event.getReason(),
-                "step", event.getStep(),
+                "step", SagaStepType.FAILED_EVENT.name(),
                 "externalReference", event.getExternalReference()
         );
 

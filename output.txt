@@ -2865,8 +2865,8 @@ Mocking methods declared on non-public parent classes is not supported.
 14:52:26.771 [main] INFO  c.e.order.service.RedisUnitTest - The following 1 profile is active: "test"
 14:52:26.797 [main] INFO  c.e.order.service.RedisUnitTest - Started RedisUnitTest in 0.048 seconds (process running for 33.227)
 [INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.058 s -- in com.example.order.service.unit.RedisUnitTest
-[INFO] Running com.example.order.service.unit.SagaOrchestratorUnitTest
-[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.105 s -- in com.example.order.service.unit.SagaOrchestratorUnitTest
+[INFO] Running com.example.order.service.unit.SagaOrchestratorAtLeastOnceUnitTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.105 s -- in com.example.order.service.unit.SagaOrchestratorAtLeastOnceUnitTest
 [INFO] Running com.example.order.service.unit.OrderServiceUnitTest
 14:52:27.502 [main] INFO  c.e.order.service.OrderServiceImpl - Delegating execution of step reserveStock to SagaOrchestrator
 14:52:27.511 [main] INFO  c.e.order.service.OrderServiceImpl - Starting order 1 with correlationId deb8d39a-8000-4b64-bf4c-ea75c8ad97aa
