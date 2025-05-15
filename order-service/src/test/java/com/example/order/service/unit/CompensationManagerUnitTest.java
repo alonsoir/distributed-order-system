@@ -123,19 +123,19 @@ class CompensationManagerUnitTest {
     @Test
     void shouldRejectSagaStepWithNullCompensation() {
         // Arrange
-        // Usamos el constructor directamente para poder pasar null en compensation
-        SagaStep step = new SagaStep(
-                TEST_STEP_NAME,
-                "test-topic",
-                SagaStepType.UNKNOWN,      // Añadido el SagaStepType
-                () -> Mono.empty(),        // action
-                null,                      // compensation es null
-                eventId -> mockOrderEvent, // successEvent
-                TEST_ORDER_ID,
-                TEST_CORRELATION_ID,
-                TEST_EVENT_ID,
-                TEST_EXTERNAL_REF
-        );
+        // Usar el builder en lugar del constructor directo
+        SagaStep step = SagaStep.builder()
+                .name(TEST_STEP_NAME)
+                .topic("test-topic")
+                .stepType(SagaStepType.UNKNOWN)
+                .action(() -> Mono.empty())
+                .compensation(null)  // Establecer compensation a null
+                .successEvent(eventId -> mockOrderEvent)
+                .orderId(TEST_ORDER_ID)
+                .correlationId(TEST_CORRELATION_ID)
+                .eventId(TEST_EVENT_ID)
+                .externalReference(TEST_EXTERNAL_REF)
+                .build();
 
         // Act
         Mono<Void> result = compensationManager.executeCompensation(step);

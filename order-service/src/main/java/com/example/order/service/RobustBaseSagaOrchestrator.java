@@ -25,6 +25,7 @@ import reactor.util.retry.Retry;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
  * Implementación base reforzada para orquestadores de sagas con funcionalidad común
@@ -432,14 +433,22 @@ public abstract class RobustBaseSagaOrchestrator {
     /**
      * Verifica si un evento ya ha sido procesado para garantizar idempotencia
      */
-    protected Mono<Boolean> isEventAlreadyProcessed(String eventId) {
+    public Mono<Boolean> isEventAlreadyProcessed(String eventId) {
         if (eventId == null) {
             return Mono.error(new IllegalArgumentException("eventId cannot be null"));
         }
 
         return databaseClient.sql("SELECT COUNT(*) FROM processed_events WHERE event_id = :eventId")
                 .bind("eventId", eventId)
-                .map(row -> row.get(0, Integer.class))
+                .map((row, metadata) -> {
+                    // Manejo explícito para evitar problemas con sobrecarga de map
+                    try {
+                        return row.get(0, Integer.class);
+                    } catch (Exception e) {
+                        log.warn("Error al mapear respuesta de BD: {}", e.getMessage());
+                        return 0; // Valor por defecto si hay error
+                    }
+                })
                 .one()
                 .map(count -> count > 0)
                 .defaultIfEmpty(false) // Si no hay resultados, no está procesado
@@ -545,22 +554,34 @@ public abstract class RobustBaseSagaOrchestrator {
                     log.info("Publishing {} event {} for step {} to topic {}",
                             event.getType(), event.getEventId(), step, topic);
 
+                    // Obtener la función de resiliencia con manejo seguro de nulos
+                    Function<Mono<OrderEvent>, Mono<OrderEvent>> resilience = null;
+                    try {
+                        resilience = resilienceManager.applyResilience(CircuitBreakerCategory.EVENT_PUBLISHING);
+                    } catch (Exception e) {
+                        log.warn("Error al obtener transformer de resiliencia: {}, usando identidad", e.getMessage());
+                    }
+
+                    // Si es nulo, usar identidad
+                    final Function<Mono<OrderEvent>, Mono<OrderEvent>> safeTranformer =
+                            resilience != null ? resilience : Function.identity();
+
                     return saveEventHistory(event, step, "ATTEMPT")
                             .then(eventPublisher.publishEvent(event, step, topic)
                                     .map(EventPublishOutcome::getEvent)
                                     .timeout(EVENT_PUBLISH_TIMEOUT)
                                     .retryWhen(createTransientErrorRetrySpec("publish-" + event.getType()))
-                                    .transform(resilienceManager.applyResilience(CircuitBreakerCategory.EVENT_PUBLISHING))
+                                    .transform(safeTranformer) // Usar el transformer seguro
                                     .doOnSuccess(v -> {
                                         log.info("Published event {} for step {}", event.getEventId(), step);
                                         saveEventHistory(event, step, "SUCCESS").subscribe();
-                                        timer.stop(meterRegistry.timer("saga.event.publish.time", Tags.of(tags))); // Usar Tags.of()
+                                        timer.stop(meterRegistry.timer("saga.event.publish.time", Tags.of(tags)));
                                     })
                                     .doOnError(e -> {
                                         log.error("Failed to publish event {} for step {}: {}",
                                                 event.getEventId(), step, e.getMessage(), e);
                                         saveEventHistory(event, step, "FAILURE: " + e.getMessage()).subscribe();
-                                        meterRegistry.counter("saga.event.publish.error", Tags.of(tags)).increment(); // Usar Tags.of()
+                                        meterRegistry.counter("saga.event.publish.error", Tags.of(tags)).increment();
                                     }));
                 },
                 meterRegistry,

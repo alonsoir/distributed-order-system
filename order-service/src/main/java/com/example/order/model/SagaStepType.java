@@ -10,6 +10,7 @@ public enum SagaStepType {
     COMPLETE_ORDER("completeOrder"),
     FAILED_ORDER("failedOrder"),
     FAILED_EVENT("failedEvent"),
+    GENERIC_STEP("genericStep"),
     UNKNOWN("unknown");
 
 
