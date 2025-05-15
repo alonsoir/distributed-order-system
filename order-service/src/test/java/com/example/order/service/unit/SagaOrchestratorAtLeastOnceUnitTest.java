@@ -4,6 +4,7 @@ import com.example.order.config.CircuitBreakerCategory;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
+import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.service.*;
 import com.example.order.utils.ReactiveUtils;
@@ -86,6 +87,7 @@ class SagaOrchestratorAtLeastOnceUnitTest {
     private MockedStatic<ReactiveUtils> reactiveUtilsMock;
 
     private SagaOrchestratorAtLeastOnceImpl sagaOrchestrator;
+    private EventRepository eventRepository;
 
     @BeforeEach
     void setUp() {
@@ -98,7 +100,8 @@ class SagaOrchestratorAtLeastOnceUnitTest {
                 resilienceManager,
                 eventPublisher,
                 inventoryService,
-                compensationManager
+                compensationManager,
+                eventRepository
         );
 
         // Mock básico de DatabaseClient para que no falle

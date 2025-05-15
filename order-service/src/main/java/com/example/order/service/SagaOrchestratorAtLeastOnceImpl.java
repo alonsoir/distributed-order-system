@@ -8,6 +8,7 @@ import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.model.SagaStep;
 import com.example.order.model.SagaStepType;
+import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -37,8 +38,15 @@ public class SagaOrchestratorAtLeastOnceImpl extends BaseSagaOrchestrator implem
             ResilienceManager resilienceManager,
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
-            CompensationManager compensationManager) {
-        super(databaseClient, transactionalOperator, meterRegistry, idGenerator, resilienceManager, eventPublisher);
+            CompensationManager compensationManager,
+            EventRepository eventRepository) {  // Nuevo parámetro
+        super(databaseClient,
+                transactionalOperator,
+                meterRegistry,
+                idGenerator,
+                resilienceManager,
+                eventPublisher,
+                eventRepository);
         this.inventoryService = inventoryService;
         this.compensationManager = compensationManager;
     }

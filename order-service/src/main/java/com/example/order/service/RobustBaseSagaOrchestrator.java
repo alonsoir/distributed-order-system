@@ -9,11 +9,12 @@ import com.example.order.events.OrderFailedEvent;
 import com.example.order.events.StockReservedEvent;
 import com.example.order.model.SagaStep;
 import com.example.order.model.SagaStepType;
+import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
-import io.micrometer.core.instrument.Tags;  // Añadir este import
+import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,12 +46,15 @@ public abstract class RobustBaseSagaOrchestrator {
     protected static final Duration INITIAL_BACKOFF = Duration.ofMillis(100);
     protected static final Duration MAX_BACKOFF = Duration.ofSeconds(2);
 
+    // Mantenemos estos por compatibilidad, pero se usarán principalmente a través del EventRepository
     protected final DatabaseClient databaseClient;
     protected final TransactionalOperator transactionalOperator;
+
     protected final MeterRegistry meterRegistry;
     protected final IdGenerator idGenerator;
     protected final ResilienceManager resilienceManager;
     protected final EventPublisher eventPublisher;
+    protected final EventRepository eventRepository;
 
     protected RobustBaseSagaOrchestrator(
             DatabaseClient databaseClient,
@@ -58,13 +62,15 @@ public abstract class RobustBaseSagaOrchestrator {
             MeterRegistry meterRegistry,
             IdGenerator idGenerator,
             ResilienceManager resilienceManager,
-            EventPublisher eventPublisher) {
+            EventPublisher eventPublisher,
+            EventRepository eventRepository) {
         this.databaseClient = databaseClient;
         this.transactionalOperator = transactionalOperator;
         this.meterRegistry = meterRegistry;
         this.idGenerator = idGenerator;
         this.resilienceManager = resilienceManager;
         this.eventPublisher = eventPublisher;
+        this.eventRepository = eventRepository;
     }
 
     /**
@@ -139,22 +145,21 @@ public abstract class RobustBaseSagaOrchestrator {
         return SagaStep.builder()
                 .name("reserveStock")
                 .topic(EventTopics.STOCK_RESERVED.getTopic())
+                .stepType(SagaStepType.RESERVE_STOCK)
                 .action(() -> inventoryService.reserveStock(orderId, quantity)
                         .timeout(SAGA_STEP_TIMEOUT)
                         .retryWhen(createTransientErrorRetrySpec("reserveStock")))
                 .compensation(() -> inventoryService.releaseStock(orderId, quantity)
                         .timeout(SAGA_STEP_TIMEOUT)
                         .retryWhen(createTransientErrorRetrySpec("releaseStock-compensation")))
-                .successEvent(eventSuccessId -> new StockReservedEvent(orderId, correlationId, eventId, externalReference,quantity))
+                .successEvent(eventSuccessId -> new StockReservedEvent(orderId, correlationId, eventId, externalReference, quantity))
                 .orderId(orderId)
                 .correlationId(correlationId)
                 .eventId(eventId)
+                .externalReference(externalReference)
                 .build();
     }
 
-    /**
-     * Actualiza el estado de una orden con validación y manejo de errores mejorado
-     */
     protected Mono<Order> updateOrderStatus(Long orderId, String status, String correlationId) {
         if (orderId == null || status == null || correlationId == null) {
             return Mono.error(new IllegalArgumentException("orderId, status, and correlationId cannot be null"));
@@ -166,34 +171,38 @@ public abstract class RobustBaseSagaOrchestrator {
                 "status", status
         );
 
+        Tag[] tags = new Tag[] {
+                Tag.of("status", status),
+                Tag.of("correlation_id", correlationId)
+        };
+
+        Timer.Sample timer = Timer.start(meterRegistry);
+
         return ReactiveUtils.withDiagnosticContext(context, () -> {
             log.info("Updating order {} status to {}", orderId, status);
 
-            // Crear un tag para métrica de tiempo
-            Tag[] tags = new Tag[] {
-                    Tag.of("status", status),
-                    Tag.of("correlation_id", correlationId)
-            };
+            // Asegurar que resilienceManager.applyResilience no cause NullPointerException
+            Function<Mono<Order>, Mono<Order>> resilience = Function.identity(); // Default a función identidad
+            try {
+                Function<Mono<Order>, Mono<Order>> tempResilience =
+                        resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS);
+                if (tempResilience != null) {
+                    resilience = tempResilience;
+                }
+            } catch (Exception e) {
+                log.warn("Error al obtener transformer de resiliencia para updateOrderStatus: {}, usando identidad", e.getMessage());
+            }
 
-            Timer.Sample timer = Timer.start(meterRegistry);
-
-            return databaseClient.sql("UPDATE orders SET status = :status, updated_at = CURRENT_TIMESTAMP WHERE id = :id")
-                    .bind("status", status)
-                    .bind("id", orderId)
-                    .then()
-                    .doOnSuccess(v -> {
+            return eventRepository.updateOrderStatus(orderId, status, correlationId)
+                    .doOnSuccess(order -> {
                         log.info("Updated order {} status to {}", orderId, status);
-                        timer.stop(meterRegistry.timer("saga.order.status.update", Tags.of(tags))); // Usar Tags.of()
+                        timer.stop(meterRegistry.timer("saga.order.status.update", Tags.of(tags)));
                     })
                     .doOnError(e -> {
                         log.error("Failed to update order {} status: {}", orderId, e.getMessage(), e);
-                        meterRegistry.counter("saga.order.status.error", Tags.of(tags)).increment(); // Usar Tags.of()
+                        meterRegistry.counter("saga.order.status.error", Tags.of(tags)).increment();
                     })
-                    .timeout(DB_OPERATION_TIMEOUT)
-                    .retryWhen(createDatabaseRetrySpec("updateOrderStatus"))
-                    .then(insertUpdateStatusAuditLog(orderId, status, correlationId))
-                    .then(Mono.just(new Order(orderId, status, correlationId)))
-                    .transform(resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS));
+                    .transform(resilience); // Usamos la función resilience que ahora es segura
         });
     }
 
@@ -201,16 +210,7 @@ public abstract class RobustBaseSagaOrchestrator {
      * Insertar registro de auditoría para actualización de estado
      */
     protected Mono<Void> insertUpdateStatusAuditLog(Long orderId, String status, String correlationId) {
-        return databaseClient.sql(
-                        "INSERT INTO order_status_history (order_id, status, correlation_id, timestamp) VALUES (:orderId, :status, :correlationId, CURRENT_TIMESTAMP)")
-                .bind("orderId", orderId)
-                .bind("status", status)
-                .bind("correlationId", correlationId)
-                .then()
-                .onErrorResume(e -> {
-                    log.warn("Failed to insert status audit log, continuing: {}", e.getMessage());
-                    return Mono.empty(); // No interrumpimos el flujo principal
-                });
+        return eventRepository.insertStatusAuditLog(orderId, status, correlationId);
     }
 
     /**
@@ -270,7 +270,7 @@ public abstract class RobustBaseSagaOrchestrator {
 
             Timer.Sample timer = Timer.start(meterRegistry);
 
-            return insertCompensationLog(step, "STARTED")
+            return eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "STARTED")
                     .then(compensationManager.executeCompensation(step))
                     .timeout(SAGA_STEP_TIMEOUT)
                     .doOnSuccess(v -> {
@@ -285,9 +285,9 @@ public abstract class RobustBaseSagaOrchestrator {
                         meterRegistry.counter("saga.compensation.error",
                                 "step", step.getName()).increment();
                     })
-                    .then(insertCompensationLog(step, "COMPLETED"))
+                    .then(eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "COMPLETED"))
                     .onErrorResume(e -> {
-                        return insertCompensationLog(step, "FAILED: " + e.getMessage())
+                        return eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "FAILED: " + e.getMessage())
                                 .then(triggerCompensationFailureAlert(step, e))
                                 .then(Mono.empty()); // No propagamos el error para no bloquear
                     })
@@ -330,41 +330,17 @@ public abstract class RobustBaseSagaOrchestrator {
      * Registra log de compensación en base de datos
      */
     protected Mono<Void> insertCompensationLog(SagaStep step, String status) {
-        return databaseClient.sql(
-                        "INSERT INTO compensation_log (step_name, order_id, correlation_id, event_id, status, timestamp) " +
-                                "VALUES (:stepName, :orderId, :correlationId, :eventId, :status, CURRENT_TIMESTAMP)")
-                .bind("stepName", step.getName())
-                .bind("orderId", step.getOrderId())
-                .bind("correlationId", step.getCorrelationId())
-                .bind("eventId", step.getEventId())
-                .bind("status", status)
-                .then()
-                .onErrorResume(e -> {
-                    log.error("Failed to log compensation status: {}", e.getMessage());
-                    return Mono.empty(); // No interrumpimos el flujo principal
-                });
+        return eventRepository.insertCompensationLog(
+                step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), status);
     }
 
     /**
      * Registra un fallo de paso en base de datos para análisis posterior
      */
     protected Mono<Void> recordStepFailure(SagaStep step, Throwable error, ErrorType errorType) {
-        return databaseClient.sql(
-                        "INSERT INTO saga_step_failures (step_name, order_id, correlation_id, event_id, " +
-                                "error_message, error_type, error_category, timestamp) " +
-                                "VALUES (:stepName, :orderId, :correlationId, :eventId, :errorMessage, :errorType, :errorCategory, CURRENT_TIMESTAMP)")
-                .bind("stepName", step.getName())
-                .bind("orderId", step.getOrderId())
-                .bind("correlationId", step.getCorrelationId())
-                .bind("eventId", step.getEventId())
-                .bind("errorMessage", error.getMessage())
-                .bind("errorType", error.getClass().getName())
-                .bind("errorCategory", errorType.name())
-                .then()
-                .onErrorResume(e -> {
-                    log.error("Failed to record step failure: {}", e.getMessage());
-                    return Mono.empty(); // No interrumpimos el flujo principal
-                });
+        return eventRepository.recordStepFailure(
+                step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(),
+                error.getMessage(), error.getClass().getName(), errorType.name());
     }
 
     /**
@@ -385,49 +361,25 @@ public abstract class RobustBaseSagaOrchestrator {
         return Mono.empty(); // Placeholder para futura implementación
     }
 
-    /**
-     * Inserta datos de una orden en la base de datos con validaciones reforzadas
-     */
     protected Mono<Void> insertOrderData(Long orderId, String correlationId, String eventId, OrderEvent event) {
         if (orderId == null || correlationId == null || eventId == null || event == null) {
             return Mono.error(new IllegalArgumentException("Required parameters cannot be null"));
         }
 
-        return databaseClient.sql(
-                        "INSERT INTO orders (id, status, correlation_id, created_at, updated_at) " +
-                                "VALUES (:id, :status, :correlationId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)")
-                .bind("id", orderId)
-                .bind("status", "pending")
-                .bind("correlationId", correlationId)
-                .then()
-                .doOnSuccess(v -> log.info("Inserted order {} into orders table", orderId))
-                .doOnError(e -> log.error("Failed to insert order {} into table: {}",
-                        orderId, e.getMessage(), e))
-                .timeout(DB_OPERATION_TIMEOUT)
-                .retryWhen(createDatabaseRetrySpec("insertOrder"))
-                .then(databaseClient.sql(
-                                "INSERT INTO outbox (event_type, correlation_id, event_id, payload, created_at, status) " +
-                                        "VALUES (:event_type, :correlationId, :eventId, :payload, CURRENT_TIMESTAMP, 'PENDING')")
-                        .bind("event_type", event.getType().name())
-                        .bind("correlationId", correlationId)
-                        .bind("eventId", eventId)
-                        .bind("payload", event.toJson())
-                        .then())
-                .doOnSuccess(v -> log.info("Inserted outbox event for order {}", orderId))
-                .doOnError(e -> log.error("Failed to insert outbox event for order {}: {}",
-                        orderId, e.getMessage(), e))
-                .timeout(DB_OPERATION_TIMEOUT)
-                .retryWhen(createDatabaseRetrySpec("insertOutbox"))
-                .then(databaseClient.sql(
-                                "INSERT INTO processed_events (event_id, processed_at) VALUES (:eventId, CURRENT_TIMESTAMP)")
-                        .bind("eventId", eventId)
-                        .then())
-                .doOnSuccess(v -> log.info("Inserted processed event for order {}", orderId))
-                .doOnError(e -> log.error("Failed to insert processed event for order {}: {}",
-                        orderId, e.getMessage(), e))
-                .timeout(DB_OPERATION_TIMEOUT)
-                .retryWhen(createDatabaseRetrySpec("insertProcessedEvent"))
-                .transform(resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS));
+        // Asegurar que resilienceManager.applyResilience no cause NullPointerException
+        Function<Mono<Void>, Mono<Void>> resilience = Function.identity(); // Default a función identidad
+        try {
+            Function<Mono<Void>, Mono<Void>> tempResilience =
+                    resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS);
+            if (tempResilience != null) {
+                resilience = tempResilience;
+            }
+        } catch (Exception e) {
+            log.warn("Error al obtener transformer de resiliencia para insertOrderData: {}, usando identidad", e.getMessage());
+        }
+
+        return eventRepository.saveOrderData(orderId, correlationId, eventId, event)
+                .transform(resilience); // Usamos la función resilience que ahora es segura
     }
 
     /**
@@ -438,31 +390,7 @@ public abstract class RobustBaseSagaOrchestrator {
             return Mono.error(new IllegalArgumentException("eventId cannot be null"));
         }
 
-        return databaseClient.sql("SELECT COUNT(*) FROM processed_events WHERE event_id = :eventId")
-                .bind("eventId", eventId)
-                .map((row, metadata) -> {
-                    // Manejo explícito para evitar problemas con sobrecarga de map
-                    try {
-                        return row.get(0, Integer.class);
-                    } catch (Exception e) {
-                        log.warn("Error al mapear respuesta de BD: {}", e.getMessage());
-                        return 0; // Valor por defecto si hay error
-                    }
-                })
-                .one()
-                .map(count -> count > 0)
-                .defaultIfEmpty(false) // Si no hay resultados, no está procesado
-                .timeout(DB_OPERATION_TIMEOUT)
-                .retryWhen(createDatabaseRetrySpec("checkEventProcessed"))
-                .doOnSuccess(processed -> {
-                    if (processed) {
-                        log.info("Event {} already processed", eventId);
-                    }
-                })
-                .onErrorResume(e -> {
-                    log.error("Error checking if event is processed: {}", e.getMessage(), e);
-                    return Mono.just(false); // Por defecto asumimos que no está procesado
-                });
+        return eventRepository.isEventProcessed(eventId);
     }
 
     /**
@@ -473,17 +401,7 @@ public abstract class RobustBaseSagaOrchestrator {
             return Mono.error(new IllegalArgumentException("orderId cannot be null"));
         }
 
-        return databaseClient.sql("SELECT id, status, correlation_id FROM orders WHERE id = :id")
-                .bind("id", orderId)
-                .map(row -> new Order(
-                        row.get("id", Long.class),
-                        row.get("status", String.class),
-                        row.get("correlation_id", String.class)
-                ))
-                .one()
-                .timeout(DB_OPERATION_TIMEOUT)
-                .retryWhen(createDatabaseRetrySpec("findExistingOrder"))
-                .switchIfEmpty(Mono.error(new IllegalStateException("Order not found: " + orderId)));
+        return eventRepository.findOrderById(orderId);
     }
 
     /**
@@ -517,15 +435,19 @@ public abstract class RobustBaseSagaOrchestrator {
     protected SagaStep createDummyStepForError(String operationName, Long orderId, String correlationId, String eventId) {
         return SagaStep.builder()
                 .name(operationName)
+                .topic("dummy.topic")
+                .stepType(SagaStepType.FAILED_EVENT)
                 .orderId(orderId)
                 .correlationId(correlationId)
                 .eventId(eventId)
                 .build();
     }
 
-    /**
-     * Publica un evento en el sistema con manejo de errores mejorado
-     */
+    // En la clase RobustBaseSagaOrchestrator, el método publishEvent tiene un problema en la forma
+// en que maneja el transformer de resiliencia cuando es nulo.
+
+// Aquí está la solución para el método publishEvent en RobustBaseSagaOrchestrator:
+
     protected Mono<OrderEvent> publishEvent(OrderEvent event, String step, String topic) {
         if (event == null || step == null || topic == null) {
             return Mono.error(new IllegalArgumentException("event, step, and topic cannot be null"));
@@ -554,33 +476,44 @@ public abstract class RobustBaseSagaOrchestrator {
                     log.info("Publishing {} event {} for step {} to topic {}",
                             event.getType(), event.getEventId(), step, topic);
 
-                    // Obtener la función de resiliencia con manejo seguro de nulos
-                    Function<Mono<OrderEvent>, Mono<OrderEvent>> resilience = null;
+                    // El problema está aquí: si resilienceManager.applyResilience devuelve null, se produce el error
+                    // Mejoramos el manejo de este caso:
+                    Function<Mono<OrderEvent>, Mono<OrderEvent>> resilience = Function.identity(); // Default a función identidad
                     try {
-                        resilience = resilienceManager.applyResilience(CircuitBreakerCategory.EVENT_PUBLISHING);
+                        Function<Mono<OrderEvent>, Mono<OrderEvent>> tempResilience =
+                                resilienceManager.applyResilience(CircuitBreakerCategory.EVENT_PUBLISHING);
+                        if (tempResilience != null) {
+                            resilience = tempResilience;
+                        }
                     } catch (Exception e) {
                         log.warn("Error al obtener transformer de resiliencia: {}, usando identidad", e.getMessage());
                     }
 
-                    // Si es nulo, usar identidad
-                    final Function<Mono<OrderEvent>, Mono<OrderEvent>> safeTranformer =
-                            resilience != null ? resilience : Function.identity();
+                    // Ya no necesitamos esta línea porque resilience ya es seguro
+                    // final Function<Mono<OrderEvent>, Mono<OrderEvent>> safeTranformer =
+                    //        resilience != null ? resilience : Function.identity();
 
-                    return saveEventHistory(event, step, "ATTEMPT")
+                    return eventRepository.saveEventHistory(
+                                    event.getEventId(), event.getCorrelationId(), event.getOrderId(),
+                                    event.getType().name(), step, "ATTEMPT")
                             .then(eventPublisher.publishEvent(event, step, topic)
                                     .map(EventPublishOutcome::getEvent)
                                     .timeout(EVENT_PUBLISH_TIMEOUT)
                                     .retryWhen(createTransientErrorRetrySpec("publish-" + event.getType()))
-                                    .transform(safeTranformer) // Usar el transformer seguro
+                                    .transform(resilience) // Usamos directamente resilience que ahora es seguro
                                     .doOnSuccess(v -> {
                                         log.info("Published event {} for step {}", event.getEventId(), step);
-                                        saveEventHistory(event, step, "SUCCESS").subscribe();
+                                        eventRepository.saveEventHistory(
+                                                event.getEventId(), event.getCorrelationId(), event.getOrderId(),
+                                                event.getType().name(), step, "SUCCESS").subscribe();
                                         timer.stop(meterRegistry.timer("saga.event.publish.time", Tags.of(tags)));
                                     })
                                     .doOnError(e -> {
                                         log.error("Failed to publish event {} for step {}: {}",
                                                 event.getEventId(), step, e.getMessage(), e);
-                                        saveEventHistory(event, step, "FAILURE: " + e.getMessage()).subscribe();
+                                        eventRepository.saveEventHistory(
+                                                event.getEventId(), event.getCorrelationId(), event.getOrderId(),
+                                                event.getType().name(), step, "FAILURE: " + e.getMessage()).subscribe();
                                         meterRegistry.counter("saga.event.publish.error", Tags.of(tags)).increment();
                                     }));
                 },
@@ -594,21 +527,9 @@ public abstract class RobustBaseSagaOrchestrator {
      * Guarda historial de eventos para auditoría
      */
     protected Mono<Void> saveEventHistory(OrderEvent event, String operation, String outcome) {
-        return databaseClient.sql(
-                        "INSERT INTO event_history (event_id, correlation_id, order_id, event_type, " +
-                                "operation, outcome, timestamp) VALUES " +
-                                "(:eventId, :correlationId, :orderId, :eventType, :operation, :outcome, CURRENT_TIMESTAMP)")
-                .bind("eventId", event.getEventId())
-                .bind("correlationId", event.getCorrelationId())
-                .bind("orderId", event.getOrderId())
-                .bind("eventType", event.getType().name())
-                .bind("operation", operation)
-                .bind("outcome", outcome)
-                .then()
-                .onErrorResume(e -> {
-                    log.warn("Failed to save event history: {}", e.getMessage());
-                    return Mono.empty();  // No interrumpimos el flujo principal
-                });
+        return eventRepository.saveEventHistory(
+                event.getEventId(), event.getCorrelationId(), event.getOrderId(),
+                event.getType().name(), operation, outcome);
     }
 
     /**

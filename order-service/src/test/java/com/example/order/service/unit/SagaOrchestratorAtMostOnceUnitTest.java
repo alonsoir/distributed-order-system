@@ -1,11 +1,13 @@
 package com.example.order.service.unit;
 
+import com.example.order.domain.Order;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.model.SagaStep;
 import com.example.order.model.SagaStepType;
+import com.example.order.repository.EventRepository;
 import com.example.order.service.*;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -28,6 +31,7 @@ import static org.mockito.Mockito.*;
  * Prueba unitaria minimalista para SagaOrchestratorAtMostOnceImpl2.
  * Se centra exclusivamente en los métodos públicos definidos en la interfaz SagaOrchestrator.
  */
+@ActiveProfiles("unit")
 class SagaOrchestratorAtMostOnceUnitTest {
 
     // Sistema bajo prueba referenciado a través de la interfaz
@@ -40,12 +44,13 @@ class SagaOrchestratorAtMostOnceUnitTest {
     private IdGenerator idGenerator;
     private InventoryService inventoryService;
     private EventPublisher eventPublisher;
+    private EventRepository eventRepository; // Nuevo mock
 
     // Constantes para pruebas
     private final Long orderId = 1234L;
-    private final String correlationId = "corr-" + UUID.randomUUID();
-    private final String eventId = "evt-" + UUID.randomUUID();
-    private final String externalReference = "ext-" + UUID.randomUUID();
+    private final String correlationId = UUID.randomUUID().toString();
+    private final String eventId = UUID.randomUUID().toString();
+    private final String externalReference = UUID.randomUUID().toString();
     private final int quantity = 5;
     private final double amount = 100.0;
 
@@ -58,6 +63,9 @@ class SagaOrchestratorAtMostOnceUnitTest {
         idGenerator = mock(IdGenerator.class);
         inventoryService = mock(InventoryService.class);
         eventPublisher = mock(EventPublisher.class);
+
+        // Nuevo mock para EventRepository
+        eventRepository = mock(EventRepository.class);
 
         // Mock de ResilienceManager con implementación directa para evitar ambigüedades
         var resilienceManager = mock(com.example.order.resilience.ResilienceManager.class);
@@ -92,6 +100,17 @@ class SagaOrchestratorAtMostOnceUnitTest {
         when(inventoryService.reserveStock(anyLong(), anyInt()))
                 .thenReturn(Mono.empty());
 
+        // Mock respuesta de EventRepository
+        when(eventRepository.isEventProcessed(anyString())).thenReturn(Mono.just(false));
+        when(eventRepository.findOrderById(anyLong())).thenReturn(Mono.just(new Order(orderId, "pending", correlationId)));
+        when(eventRepository.saveOrderData(anyLong(), anyString(), anyString(), any(OrderEvent.class))).thenReturn(Mono.empty());
+        when(eventRepository.updateOrderStatus(anyLong(), anyString(), anyString())).thenReturn(Mono.just(new Order(orderId, "pending", correlationId)));
+        when(eventRepository.insertStatusAuditLog(anyLong(), anyString(), anyString())).thenReturn(Mono.empty());
+        when(eventRepository.saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
+        when(eventRepository.recordSagaFailure(anyLong(), anyString(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
+        when(eventRepository.recordStepFailure(anyString(), anyLong(), anyString(), anyString(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
+        when(eventRepository.insertCompensationLog(anyString(), anyLong(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
+
         // CompensationManager
         CompensationManager compensationManager = mock(CompensationManager.class);
 
@@ -104,7 +123,8 @@ class SagaOrchestratorAtMostOnceUnitTest {
                 resilienceManager,
                 eventPublisher,
                 inventoryService,
-                compensationManager
+                compensationManager,
+                eventRepository // Incluir el nuevo parámetro
         );
     }
 
@@ -140,12 +160,14 @@ class SagaOrchestratorAtMostOnceUnitTest {
         SagaStep step = SagaStep.builder()
                 .name("testStep")
                 .topic("test.topic")
+                .stepType(SagaStepType.GENERIC_STEP) // Usar el tipo genérico
                 .action(() -> Mono.empty())
                 .compensation(() -> Mono.empty())
                 .successEvent(eventId -> new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity))
                 .orderId(orderId)
                 .correlationId(correlationId)
                 .eventId(eventId)
+                .externalReference(externalReference)
                 .build();
 
         // Act & Assert
@@ -161,7 +183,7 @@ class SagaOrchestratorAtMostOnceUnitTest {
     }
 
     @Test
-    public void testExecuteOrderSaga_Success() {
+    void testExecuteOrderSaga_Success() {
         // Act & Assert
         StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
                 .expectNextCount(1)
@@ -174,7 +196,7 @@ class SagaOrchestratorAtMostOnceUnitTest {
     }
 
     @Test
-    public void testPublishFailedEvent() {
+    void testPublishFailedEvent() {
         // Arrange
         OrderFailedEvent failedEvent = new OrderFailedEvent(
                 orderId,
@@ -196,7 +218,7 @@ class SagaOrchestratorAtMostOnceUnitTest {
     }
 
     @Test
-    public void testPublishEvent() {
+    void testPublishEvent() {
         // Arrange
         OrderEvent event = new OrderCreatedEvent(
                 orderId, correlationId, eventId, externalReference, quantity);
@@ -216,7 +238,7 @@ class SagaOrchestratorAtMostOnceUnitTest {
     }
 
     @Test
-    public void testCreateFailedEvent() {
+    void testCreateFailedEvent() {
         // Arrange
         String reason = "Test failure reason";
 

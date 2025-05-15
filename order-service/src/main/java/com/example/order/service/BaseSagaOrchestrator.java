@@ -9,6 +9,7 @@ import com.example.order.events.OrderFailedEvent;
 import com.example.order.events.StockReservedEvent;
 import com.example.order.model.SagaStep;
 import com.example.order.model.SagaStepType;
+import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -33,6 +34,7 @@ public abstract class BaseSagaOrchestrator {
     protected final IdGenerator idGenerator;
     protected final ResilienceManager resilienceManager;
     protected final EventPublisher eventPublisher;
+    protected final EventRepository eventRepository;
 
     protected BaseSagaOrchestrator(
             DatabaseClient databaseClient,
@@ -40,13 +42,15 @@ public abstract class BaseSagaOrchestrator {
             MeterRegistry meterRegistry,
             IdGenerator idGenerator,
             ResilienceManager resilienceManager,
-            EventPublisher eventPublisher) {
+            EventPublisher eventPublisher,
+            EventRepository eventRepository) {
         this.databaseClient = databaseClient;
         this.transactionalOperator = transactionalOperator;
         this.meterRegistry = meterRegistry;
         this.idGenerator = idGenerator;
         this.resilienceManager = resilienceManager;
         this.eventPublisher = eventPublisher;
+        this.eventRepository = eventRepository;
     }
 
     /**

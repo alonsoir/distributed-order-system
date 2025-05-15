@@ -80,3 +80,7 @@ app:
   id:
     check-collisions: ${APP_ID_CHECK_COLLISIONS:false}  # Desactivado por defecto en producción para rendimiento
   node-id: ${APP_NODE_ID:0}  # Configurable para entornos multi-nodo
+
+resilience4j:
+  fallback:
+    enabled: true

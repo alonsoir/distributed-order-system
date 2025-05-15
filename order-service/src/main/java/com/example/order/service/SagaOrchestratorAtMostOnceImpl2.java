@@ -8,6 +8,7 @@ import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.model.SagaStep;
 import com.example.order.model.SagaStepType;
+import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -44,8 +45,10 @@ public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator 
             ResilienceManager resilienceManager,
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
-            CompensationManager compensationManager) {
-        super(databaseClient, transactionalOperator, meterRegistry, idGenerator, resilienceManager, eventPublisher);
+            CompensationManager compensationManager,
+            EventRepository eventRepository) {  // Nuevo parámetro
+        super(databaseClient, transactionalOperator, meterRegistry, idGenerator,
+                resilienceManager, eventPublisher, eventRepository);  // Pasar el nuevo parámetro
         this.inventoryService = inventoryService;
         this.compensationManager = compensationManager;
     }
@@ -187,23 +190,13 @@ public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator 
     /**
      * Registra un fallo completo de saga para análisis posterior
      */
+    /**
+     * Registra un fallo completo de saga para análisis posterior
+     */
     private Mono<Void> recordSagaFailure(Long orderId, String correlationId, Throwable error) {
         ErrorType errorType = classifyError(error);
-
-        return databaseClient.sql(
-                        "INSERT INTO saga_failures (order_id, correlation_id, error_message, error_type, " +
-                                "error_category, timestamp) VALUES (:orderId, :correlationId, :errorMessage, " +
-                                ":errorType, :errorCategory, CURRENT_TIMESTAMP)")
-                .bind("orderId", orderId)
-                .bind("correlationId", correlationId)
-                .bind("errorMessage", error.getMessage())
-                .bind("errorType", error.getClass().getName())
-                .bind("errorCategory", errorType.name())
-                .then()
-                .onErrorResume(e -> {
-                    log.error("Failed to record saga failure: {}", e.getMessage());
-                    return Mono.empty();
-                });
+        return eventRepository.recordSagaFailure(
+                orderId, correlationId, error.getMessage(), error.getClass().getName(), errorType.name());
     }
 
     @Override
@@ -402,20 +395,10 @@ public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator 
                     reason,
                     externalReference);
 
-            // Registrar el evento fallido en base de datos para trazabilidad
-            return databaseClient.sql(
-                            "INSERT INTO failed_events (order_id, correlation_id, event_id, reason, external_reference, timestamp) " +
-                                    "VALUES (:orderId, :correlationId, :eventId, :reason, :externalReference, CURRENT_TIMESTAMP)")
-                    .bind("orderId", orderId)
-                    .bind("correlationId", correlationId)
-                    .bind("eventId", eventId)
-                    .bind("reason", reason)
-                    .bind("externalReference", externalReference != null ? externalReference : "")
-                    .then()
-                    .onErrorResume(e -> {
-                        log.error("Failed to record failure event: {}", e.getMessage(), e);
-                        return Mono.empty(); // Continuar para al menos intentar publicar
-                    })
+            // Usar EventRepository para registrar el evento fallido
+            return eventRepository.saveEventHistory(
+                            eventId, correlationId, orderId,
+                            event.getType().name(), "createFailedEvent", reason)
                     .then(publishFailedEvent(event))
                     .doOnSuccess(v -> meterRegistry.counter("saga.failure_event.created").increment())
                     .doOnError(e -> log.error("Error creating failure event: {}", e.getMessage(), e));

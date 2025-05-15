@@ -1,5 +1,6 @@
 package com.example.order.config;
 
+import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.service.*;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -24,7 +25,20 @@ public class SagaConfiguration {
             ResilienceManager resilienceManager,
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
-            CompensationManager compensationManager) {
+            CompensationManager compensationManager,
+            EventRepository eventRepository) {
+        /*
+        public SagaOrchestratorAtMostOnceImpl2(
+            DatabaseClient databaseClient,
+            TransactionalOperator transactionalOperator,
+            MeterRegistry meterRegistry,
+            IdGenerator idGenerator,
+            ResilienceManager resilienceManager,
+            @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
+            InventoryService inventoryService,
+            CompensationManager compensationManager,
+            EventRepository eventRepository)
+        * */
         return new SagaOrchestratorAtMostOnceImpl2(
                 databaseClient,
                 transactionalOperator,
@@ -33,7 +47,8 @@ public class SagaConfiguration {
                 resilienceManager,
                 eventPublisher,
                 inventoryService,
-                compensationManager
+                compensationManager,
+                eventRepository
         );
     }
 
@@ -47,7 +62,8 @@ public class SagaConfiguration {
             ResilienceManager resilienceManager,
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
-            CompensationManager compensationManager) {
+            CompensationManager compensationManager,
+            EventRepository eventRepository) {
         return new SagaOrchestratorAtLeastOnceImpl(
                 databaseClient,
                 transactionalOperator,
@@ -56,7 +72,8 @@ public class SagaConfiguration {
                 resilienceManager,
                 eventPublisher,
                 inventoryService,
-                compensationManager
+                compensationManager,
+                eventRepository
         );
     }
 }
