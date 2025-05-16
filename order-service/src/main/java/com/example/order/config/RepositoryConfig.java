@@ -1,6 +1,7 @@
 package com.example.order.config;
 
 import com.example.order.repository.EventRepository;
+import com.example.order.repository.ImprovedR2dbcEventRepository;
 import com.example.order.repository.R2dbcEventRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,6 +13,6 @@ public class RepositoryConfig {
 
     @Bean
     public EventRepository eventRepository(DatabaseClient databaseClient, TransactionalOperator transactionalOperator) {
-        return new R2dbcEventRepository(databaseClient, transactionalOperator);
+        return new ImprovedR2dbcEventRepository(databaseClient, transactionalOperator);
     }
 }

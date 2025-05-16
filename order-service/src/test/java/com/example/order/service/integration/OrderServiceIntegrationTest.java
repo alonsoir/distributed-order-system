@@ -35,7 +35,7 @@ class OrderServiceIntegrationTest {
             .withDatabaseName("orders")
             .withUsername("root")
             .withPassword("root")
-            .withInitScript("schema.sql");
+            .withInitScript("schema-tables.sql");
 
     @Container
     private static final GenericContainer<?> redis = new GenericContainer<>(DockerImageName.parse("redis:7"))
