@@ -2,7 +2,6 @@ package com.example.order.config;
 
 import com.example.order.repository.EventRepository;
 import com.example.order.repository.ImprovedR2dbcEventRepository;
-import com.example.order.repository.R2dbcEventRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.r2dbc.core.DatabaseClient;

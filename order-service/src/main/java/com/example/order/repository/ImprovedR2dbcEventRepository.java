@@ -15,7 +15,6 @@ import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.validation.annotation.Validated;
-import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 import jakarta.validation.constraints.NotBlank;
@@ -27,12 +26,12 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
-import java.util.function.Function;
-import java.util.regex.Matcher;
 
 /**
- * Implementación segura y robusta de EventRepository basada en R2DBC
+ * @deprecated Esta implementación ha sido reemplazada por {@link CompositeEventRepository}
+ * y sus componentes. Será eliminada en futuras versiones.
  */
+@Deprecated(since = "2.0.0", forRemoval = true)
 @Repository
 @Validated
 public class ImprovedR2dbcEventRepository implements EventRepository {

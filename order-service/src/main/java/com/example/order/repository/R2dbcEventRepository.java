@@ -17,8 +17,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
 /**
- * Implementación de EventRepository basada en R2DBC
+ * @deprecated Esta implementación ha sido reemplazada por {@link CompositeEventRepository}
+ * y sus componentes. Será eliminada en futuras versiones.
  */
+@Deprecated(since = "2.0.0", forRemoval = true)
 @Repository
 @ConditionalOnBootstrapDisabled
 public class R2dbcEventRepository implements EventRepository {
