@@ -7,6 +7,7 @@ import com.example.order.events.OrderFailedEvent;
 import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.service.*;
+import com.example.order.service.v2.SagaOrchestratorAtLeastOnceImplV2;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -37,6 +38,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 @ActiveProfiles("unit")
 @MockitoSettings(strictness = Strictness.LENIENT)
+@Deprecated(since = "2.0.0", forRemoval = true)
+
 class SagaOrchestratorAtLeastOnceUnitTest {
 
     @Mock

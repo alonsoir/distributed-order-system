@@ -1,4 +1,4 @@
-package com.example.order.service;
+package com.example.order.service.v2;
 
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
@@ -10,12 +10,16 @@ import com.example.order.model.SagaStep;
 import com.example.order.model.SagaStepType;
 import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
+import com.example.order.service.CompensationManager;
+import com.example.order.service.EventPublisher;
+import com.example.order.service.IdGenerator;
+import com.example.order.service.InventoryService;
+import com.example.order.service.SagaOrchestrator;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
@@ -24,15 +28,13 @@ import java.util.Map;
 
 @Slf4j
 @Component
-@Qualifier("atLeastOnce")
-@Deprecated(since = "2.0.0", forRemoval = true)
-public class SagaOrchestratorAtLeastOnceImpl extends BaseSagaOrchestrator implements SagaOrchestrator {
+@Qualifier("atLeastOnceV2")
+public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 implements SagaOrchestrator {
 
     private final InventoryService inventoryService;
     private final CompensationManager compensationManager;
 
-    public SagaOrchestratorAtLeastOnceImpl(
-            DatabaseClient databaseClient,
+    public SagaOrchestratorAtLeastOnceImplV2(
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
             IdGenerator idGenerator,
@@ -40,9 +42,8 @@ public class SagaOrchestratorAtLeastOnceImpl extends BaseSagaOrchestrator implem
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
             CompensationManager compensationManager,
-            EventRepository eventRepository) {  // Nuevo parámetro
-        super(databaseClient,
-                transactionalOperator,
+            EventRepository eventRepository) {
+        super(transactionalOperator,
                 meterRegistry,
                 idGenerator,
                 resilienceManager,
@@ -134,15 +135,13 @@ public class SagaOrchestratorAtLeastOnceImpl extends BaseSagaOrchestrator implem
                                         step.getName(), step.getOrderId());
 
                                 // Registrar el inicio de la ejecución del paso
-                                return databaseClient.sql("INSERT INTO event_history " +
-                                                "(event_id, correlation_id, order_id, event_type, operation, outcome, timestamp) " +
-                                                "VALUES (:eventId, :correlationId, :orderId, :eventType, :operation, 'STARTED', NOW())")
-                                        .bind("eventId", step.getEventId())
-                                        .bind("correlationId", step.getCorrelationId())
-                                        .bind("orderId", step.getOrderId())
-                                        .bind("eventType", "SAGA_STEP")
-                                        .bind("operation", step.getName())
-                                        .then()
+                                return eventRepository.saveEventHistory(
+                                                step.getEventId(),
+                                                step.getCorrelationId(),
+                                                step.getOrderId(),
+                                                "SAGA_STEP",
+                                                step.getName(),
+                                                "STARTED")
                                         .then(
                                                 // Ejecutar la acción del paso y publicar el evento de éxito
                                                 transactionalOperator.transactional(
@@ -150,16 +149,13 @@ public class SagaOrchestratorAtLeastOnceImpl extends BaseSagaOrchestrator implem
                                                                 // Marcar el evento como procesado en la misma transacción
                                                                 .then(markEventAsProcessed(step.getEventId()))
                                                                 // Registrar el resultado exitoso
-                                                                .then(databaseClient.sql("INSERT INTO event_history " +
-                                                                                "(event_id, correlation_id, order_id, event_type, operation, outcome, timestamp) " +
-                                                                                "VALUES (:eventId, :correlationId, :orderId, :eventType, :operation, 'COMPLETED', NOW())")
-                                                                        .bind("eventId", step.getEventId())
-                                                                        .bind("correlationId", step.getCorrelationId())
-                                                                        .bind("orderId", step.getOrderId())
-                                                                        .bind("eventType", "SAGA_STEP")
-                                                                        .bind("operation", step.getName())
-                                                                        .then()
-                                                                )
+                                                                .then(eventRepository.saveEventHistory(
+                                                                        step.getEventId(),
+                                                                        step.getCorrelationId(),
+                                                                        step.getOrderId(),
+                                                                        "SAGA_STEP",
+                                                                        step.getName(),
+                                                                        "COMPLETED"))
                                                                 .then(Mono.defer(() -> {
                                                                     log.info("Step action completed, publishing success event");
                                                                     // Crear y publicar el evento de éxito
@@ -210,7 +206,6 @@ public class SagaOrchestratorAtLeastOnceImpl extends BaseSagaOrchestrator implem
                 () -> {
                     log.info("Creating order {} with correlationId {}, eventId {} and externalReference {}",
                             orderId, correlationId, eventId, externalReference);
-                    //    public OrderCreatedEvent(Long orderId, String correlationId, String eventId, String externalReference, int quantity) {
                     OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity);
 
                     Mono<Order> orderMono = insertOrderData(orderId, correlationId, eventId, event)

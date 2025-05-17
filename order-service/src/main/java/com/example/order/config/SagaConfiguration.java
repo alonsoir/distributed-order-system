@@ -3,6 +3,8 @@ package com.example.order.config;
 import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
 import com.example.order.service.*;
+import com.example.order.service.v2.SagaOrchestratorAtLeastOnceImplV2;
+import com.example.order.service.v2.SagaOrchestratorAtMostOnceImplV2;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -16,9 +18,8 @@ public class SagaConfiguration {
 
     @Bean
     @Primary
-    @Qualifier("sagaOrchestratorImpl2")
-    public SagaOrchestrator sagaOrchestratorImpl2(
-            DatabaseClient databaseClient,
+    @Qualifier("atMostOnceSagaOrchestrator")
+    public SagaOrchestrator atMostOnceSagaOrchestrator(
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
             IdGenerator idGenerator,
@@ -27,20 +28,8 @@ public class SagaConfiguration {
             InventoryService inventoryService,
             CompensationManager compensationManager,
             EventRepository eventRepository) {
-        /*
-        public SagaOrchestratorAtMostOnceImpl2(
-            DatabaseClient databaseClient,
-            TransactionalOperator transactionalOperator,
-            MeterRegistry meterRegistry,
-            IdGenerator idGenerator,
-            ResilienceManager resilienceManager,
-            @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
-            InventoryService inventoryService,
-            CompensationManager compensationManager,
-            EventRepository eventRepository)
-        * */
-        return new SagaOrchestratorAtMostOnceImpl2(
-                databaseClient,
+
+        return new SagaOrchestratorAtMostOnceImplV2(
                 transactionalOperator,
                 meterRegistry,
                 idGenerator,
@@ -53,9 +42,8 @@ public class SagaConfiguration {
     }
 
     @Bean
-    @Qualifier("legacySagaOrchestrator")
-    public SagaOrchestrator legacySagaOrchestrator(
-            DatabaseClient databaseClient,
+    @Qualifier("atLeastOnceSagaOrchestrator")
+    public SagaOrchestrator atLeastOnceSagaOrchestrator(
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
             IdGenerator idGenerator,
@@ -64,8 +52,7 @@ public class SagaConfiguration {
             InventoryService inventoryService,
             CompensationManager compensationManager,
             EventRepository eventRepository) {
-        return new SagaOrchestratorAtLeastOnceImpl(
-                databaseClient,
+        return new SagaOrchestratorAtLeastOnceImplV2(
                 transactionalOperator,
                 meterRegistry,
                 idGenerator,

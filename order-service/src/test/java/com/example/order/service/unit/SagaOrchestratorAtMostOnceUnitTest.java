@@ -32,6 +32,7 @@ import static org.mockito.Mockito.*;
  * Se centra exclusivamente en los métodos públicos definidos en la interfaz SagaOrchestrator.
  */
 @ActiveProfiles("unit")
+@Deprecated(since = "2.0.0", forRemoval = true)
 class SagaOrchestratorAtMostOnceUnitTest {
 
     // Sistema bajo prueba referenciado a través de la interfaz

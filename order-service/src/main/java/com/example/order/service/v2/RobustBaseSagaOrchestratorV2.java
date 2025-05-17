@@ -1,8 +1,9 @@
-package com.example.order.service;
+package com.example.order.service.v2;
 
 import com.example.order.config.CircuitBreakerCategory;
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
+import com.example.order.domain.DeliveryMode;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
@@ -11,6 +12,11 @@ import com.example.order.model.SagaStep;
 import com.example.order.model.SagaStepType;
 import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
+import com.example.order.service.CompensationManager;
+import com.example.order.service.EventPublishOutcome;
+import com.example.order.service.EventPublisher;
+import com.example.order.service.IdGenerator;
+import com.example.order.service.InventoryService;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
@@ -18,7 +24,6 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -30,11 +35,10 @@ import java.util.function.Function;
 
 /**
  * Implementación base reforzada para orquestadores de sagas con funcionalidad común
+ * Versión 2 que elimina las referencias directas a DatabaseClient
  */
-@Deprecated(since = "2.0.0", forRemoval = true)
-
-public abstract class RobustBaseSagaOrchestrator {
-    private static final Logger log = LoggerFactory.getLogger(RobustBaseSagaOrchestrator.class);
+public abstract class RobustBaseSagaOrchestratorV2 {
+    private static final Logger log = LoggerFactory.getLogger(RobustBaseSagaOrchestratorV2.class);
 
     // Configuración de timeouts
     protected static final Duration DB_OPERATION_TIMEOUT = Duration.ofSeconds(10);
@@ -48,25 +52,20 @@ public abstract class RobustBaseSagaOrchestrator {
     protected static final Duration INITIAL_BACKOFF = Duration.ofMillis(100);
     protected static final Duration MAX_BACKOFF = Duration.ofSeconds(2);
 
-    // Mantenemos estos por compatibilidad, pero se usarán principalmente a través del EventRepository
-    protected final DatabaseClient databaseClient;
     protected final TransactionalOperator transactionalOperator;
-
     protected final MeterRegistry meterRegistry;
     protected final IdGenerator idGenerator;
     protected final ResilienceManager resilienceManager;
     protected final EventPublisher eventPublisher;
     protected final EventRepository eventRepository;
 
-    protected RobustBaseSagaOrchestrator(
-            DatabaseClient databaseClient,
+    protected RobustBaseSagaOrchestratorV2(
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
             IdGenerator idGenerator,
             ResilienceManager resilienceManager,
             EventPublisher eventPublisher,
             EventRepository eventRepository) {
-        this.databaseClient = databaseClient;
         this.transactionalOperator = transactionalOperator;
         this.meterRegistry = meterRegistry;
         this.idGenerator = idGenerator;
@@ -445,11 +444,6 @@ public abstract class RobustBaseSagaOrchestrator {
                 .build();
     }
 
-    // En la clase RobustBaseSagaOrchestrator, el método publishEvent tiene un problema en la forma
-// en que maneja el transformer de resiliencia cuando es nulo.
-
-// Aquí está la solución para el método publishEvent en RobustBaseSagaOrchestrator:
-
     protected Mono<OrderEvent> publishEvent(OrderEvent event, String step, String topic) {
         if (event == null || step == null || topic == null) {
             return Mono.error(new IllegalArgumentException("event, step, and topic cannot be null"));
@@ -478,7 +472,6 @@ public abstract class RobustBaseSagaOrchestrator {
                     log.info("Publishing {} event {} for step {} to topic {}",
                             event.getType(), event.getEventId(), step, topic);
 
-                    // El problema está aquí: si resilienceManager.applyResilience devuelve null, se produce el error
                     // Mejoramos el manejo de este caso:
                     Function<Mono<OrderEvent>, Mono<OrderEvent>> resilience = Function.identity(); // Default a función identidad
                     try {
@@ -491,10 +484,6 @@ public abstract class RobustBaseSagaOrchestrator {
                         log.warn("Error al obtener transformer de resiliencia: {}, usando identidad", e.getMessage());
                     }
 
-                    // Ya no necesitamos esta línea porque resilience ya es seguro
-                    // final Function<Mono<OrderEvent>, Mono<OrderEvent>> safeTranformer =
-                    //        resilience != null ? resilience : Function.identity();
-
                     return eventRepository.saveEventHistory(
                                     event.getEventId(), event.getCorrelationId(), event.getOrderId(),
                                     event.getType().name(), step, "ATTEMPT")
@@ -502,7 +491,7 @@ public abstract class RobustBaseSagaOrchestrator {
                                     .map(EventPublishOutcome::getEvent)
                                     .timeout(EVENT_PUBLISH_TIMEOUT)
                                     .retryWhen(createTransientErrorRetrySpec("publish-" + event.getType()))
-                                    .transform(resilience) // Usamos directamente resilience que ahora es seguro
+                                    .transform(resilience)
                                     .doOnSuccess(v -> {
                                         log.info("Published event {} for step {}", event.getEventId(), step);
                                         eventRepository.saveEventHistory(

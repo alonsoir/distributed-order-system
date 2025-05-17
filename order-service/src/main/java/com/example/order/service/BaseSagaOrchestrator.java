@@ -25,6 +25,7 @@ import java.util.Map;
 /**
  * Implementación base para orquestadores de sagas con funcionalidad común
  */
+@Deprecated(since = "2.0.0", forRemoval = true)
 public abstract class BaseSagaOrchestrator {
     private static final Logger log = LoggerFactory.getLogger(BaseSagaOrchestrator.class);
 

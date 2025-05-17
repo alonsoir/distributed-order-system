@@ -1,4 +1,4 @@
-package com.example.order.service;
+package com.example.order.service.v2;
 
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
@@ -10,13 +10,17 @@ import com.example.order.model.SagaStep;
 import com.example.order.model.SagaStepType;
 import com.example.order.repository.EventRepository;
 import com.example.order.resilience.ResilienceManager;
+import com.example.order.service.CompensationManager;
+import com.example.order.service.EventPublisher;
+import com.example.order.service.IdGenerator;
+import com.example.order.service.InventoryService;
+import com.example.order.service.SagaOrchestrator;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
@@ -28,19 +32,17 @@ import jakarta.annotation.PostConstruct;
 
 /**
  * Implementación robusta AT MOST ONCE del orquestador de sagas
+ * Versión 2: Usa exclusivamente EventRepository y elimina la dependencia de DatabaseClient
  */
 @Slf4j
-@Component("sagaOrchestratorImpl2")
-@Qualifier("sagaOrchestratorImpl2")
-@Deprecated(since = "2.0.0", forRemoval = true)
-
-public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator implements SagaOrchestrator {
+@Component("sagaOrchestratorImplV2")
+@Qualifier("sagaOrchestratorImplV2")
+public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestratorV2 implements SagaOrchestrator {
 
     private final InventoryService inventoryService;
     private final CompensationManager compensationManager;
 
-    public SagaOrchestratorAtMostOnceImpl2(
-            DatabaseClient databaseClient,
+    public SagaOrchestratorAtMostOnceImplV2(
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
             IdGenerator idGenerator,
@@ -48,9 +50,9 @@ public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator 
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
             CompensationManager compensationManager,
-            EventRepository eventRepository) {  // Nuevo parámetro
-        super(databaseClient, transactionalOperator, meterRegistry, idGenerator,
-                resilienceManager, eventPublisher, eventRepository);  // Pasar el nuevo parámetro
+            EventRepository eventRepository) {
+        super(transactionalOperator, meterRegistry, idGenerator,
+                resilienceManager, eventPublisher, eventRepository);
         this.inventoryService = inventoryService;
         this.compensationManager = compensationManager;
     }
@@ -77,7 +79,7 @@ public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator 
         meterRegistry.gauge("saga.health.stock_reservation_success_rate",
                 this, o -> o.getSuccessRate("reserveStock"));
 
-        log.info("SagaOrchestratorAtMostOnceImpl2 initialized with robust configuration");
+        log.info("SagaOrchestratorAtMostOnceImplV2 initialized with robust configuration");
     }
 
     /**
@@ -189,9 +191,6 @@ public class SagaOrchestratorAtMostOnceImpl2 extends RobustBaseSagaOrchestrator 
         );
     }
 
-    /**
-     * Registra un fallo completo de saga para análisis posterior
-     */
     /**
      * Registra un fallo completo de saga para análisis posterior
      */

@@ -8,19 +8,17 @@ import com.example.order.repository.base.AbstractReactiveRepository;
 import com.example.order.repository.base.SecurityUtils;
 import com.example.order.repository.base.ValidationUtils;
 import com.example.order.repository.events.ProcessedEventRepository;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.validation.annotation.Validated;
 import reactor.core.publisher.Mono;
-import reactor.util.retry.Retry;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
-import java.time.Duration;
+
 import java.util.concurrent.TimeoutException;
 
 /**
