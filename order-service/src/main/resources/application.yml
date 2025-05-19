@@ -48,6 +48,15 @@ dlq:
     interval: ${DLQ_PROCESS_INTERVAL:60000}
 
 event:
+  repository:
+    max-retries: 3
+    retry-backoff-millis: 100
+    operation-timeout-millis: 5000
+    enable-circuit-breaker: true
+    circuit-breaker-failure-threshold: 5
+    circuit-breaker-open-time-millis: 30000
+    verbose-logging: false
+    metrics-prefix: repository
   persistence:
     topics:
       orders:

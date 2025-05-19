@@ -26,6 +26,8 @@ import static org.mockito.Mockito.*;
 /**
  * Tests específicos para escenarios de error y condiciones de borde
  */
+@Deprecated(since = "2.0.0", forRemoval = true)
+
 @ExtendWith(MockitoExtension.class)
 public class ImprovedR2dbcEventRepositoryErrorTest {
 

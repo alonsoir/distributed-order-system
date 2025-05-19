@@ -29,6 +29,8 @@ import java.util.concurrent.TimeUnit;
  */
 @SpringBootTest
 @Testcontainers
+@Deprecated(since = "2.0.0", forRemoval = true)
+
 public class ImprovedR2dbcEventRepositoryIntegrationTest {
 
     // Container MySQL para pruebas

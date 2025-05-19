@@ -4,10 +4,12 @@ package com.example.order.domain;
  * Clase que representa una orden en el sistema.
  */
 public class Order {
-    private final Long id;
-    private final String status;
-    private final String correlationId;
+    private  Long id;
+    private  String status;
+    private  String correlationId;
 
+    public Order() {
+    }
     public Order(Long id, String status, String correlationId) {
         this.id = id;
         this.status = status;
@@ -47,5 +49,13 @@ public class Order {
                 ", status='" + status + '\'' +
                 ", correlationId='" + correlationId + '\'' +
                 '}';
+    }
+
+    public void setId(long l) {
+        this.id = l;
+    }
+
+    public void setStatus(String completed) {
+        this.status = completed;
     }
 }

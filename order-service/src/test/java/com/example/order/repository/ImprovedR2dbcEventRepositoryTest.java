@@ -22,6 +22,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@Deprecated(since = "2.0.0", forRemoval = true)
+
 class ImprovedR2dbcEventRepositoryTest {
 
     @Mock
