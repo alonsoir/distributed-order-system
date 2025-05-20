@@ -83,7 +83,7 @@ public abstract class BaseSagaOrchestrator {
     protected Mono<Void> insertOrderData(Long orderId, String correlationId, String eventId, OrderEvent event) {
         return databaseClient.sql("INSERT INTO orders (id, status, correlation_id) VALUES (:id, :status, :correlationId)")
                 .bind("id", orderId)
-                .bind("status", "pending")
+                .bind("status",event.getType().name())
                 .bind("correlationId", correlationId)
                 .then()
                 .doOnSuccess(v -> log.info("Inserted order {} into orders table", orderId))

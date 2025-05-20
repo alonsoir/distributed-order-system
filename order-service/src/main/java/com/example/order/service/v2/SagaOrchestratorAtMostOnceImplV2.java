@@ -2,6 +2,7 @@ package com.example.order.service.v2;
 
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
@@ -141,25 +142,33 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                                     return findExistingOrder(orderId);
                                 }
 
-                                // Flow principal de saga
-                                return transactionalOperator.transactional(
-                                                createOrder(orderId, correlationId, eventId, externalReference, quantity)
-                                                        .flatMap(order -> {
-                                                            if (!"pending".equals(order.status())) {
-                                                                log.warn("Order status is not 'pending': {}", order.status());
-                                                                return Mono.just(order);  // No continuar si no está en pending
-                                                            }
+                                // Flow principal de saga: Primero crear la orden (fuera de la transacción principal)
+                                return createOrder(orderId, correlationId, eventId, externalReference, quantity)
+                                        .flatMap(order -> {
+                                            // IMPORTANTE: Verificar el estado usando el enum
+                                            if (order.status() != OrderStatus.ORDER_PENDING) {
+                                                log.warn("Order status is not PENDING: {}", order.status());
+                                                return Mono.just(order);  // No continuar si no está en pending
+                                            }
 
-                                                            log.info("Order created, proceeding to reserve stock");
-                                                            SagaStep reserveStockStep = createReserveStockStep(
-                                                                    inventoryService, orderId, quantity, correlationId, eventId, externalReference);
+                                            // Solo si la orden está en estado PENDING, procedemos con la reserva de stock
+                                            log.info("Order created, proceeding to reserve stock");
 
-                                                            return executeStep(reserveStockStep)
-                                                                    .flatMap(event -> {
-                                                                        log.info("Stock reserved successfully, updating order status to completed");
-                                                                        return updateOrderStatus(orderId, "completed", correlationId);
-                                                                    });
-                                                        }))
+                                            return transactionalOperator.transactional(
+                                                    Mono.defer(() -> {
+                                                        // Crear y ejecutar el paso de reserva dentro de un Mono.defer
+                                                        SagaStep reserveStockStep = createReserveStockStep(
+                                                                inventoryService, orderId, quantity, correlationId, eventId, externalReference);
+
+                                                        return executeStep(reserveStockStep)
+                                                                .flatMap(event -> {
+                                                                    log.info("Stock reserved successfully, updating order status to completed");
+                                                                    // Usar el enum para el estado COMPLETED
+                                                                    return updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED.getValue(), correlationId);
+                                                                });
+                                                    })
+                                            );
+                                        })
                                         .timeout(GLOBAL_SAGA_TIMEOUT)
                                         .doOnSuccess(order -> {
                                             log.info("Order saga completed successfully for orderId={}", orderId);
@@ -180,8 +189,12 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                                         })
                                         .onErrorResume(e -> {
                                             // Actualizar estado a fallido y registrar error
-                                            return updateOrderStatus(orderId, "failed", correlationId)
-                                                    .doOnSuccess(v -> recordSagaFailure(orderId, correlationId, e));
+                                            // Usar el enum para el estado FAILED
+                                            return updateOrderStatus(orderId, OrderStatus.ORDER_FAILED.getValue(), correlationId)
+                                                    .doOnSuccess(order -> {
+                                                        // Usar doOnSuccess para asegurar que se registre el error original
+                                                        recordSagaFailure(orderId, correlationId, e);
+                                                    });
                                         });
                             });
                 },
@@ -196,8 +209,10 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
      */
     private Mono<Void> recordSagaFailure(Long orderId, String correlationId, Throwable error) {
         ErrorType errorType = classifyError(error);
+        String errorMessage = error.getMessage() != null ? error.getMessage() : "Unknown error";
+        String exceptionName = error.getClass().getSimpleName(); // Usar getSimpleName() en lugar de getName()
         return eventRepository.recordSagaFailure(
-                orderId, correlationId, error.getMessage(), error.getClass().getName(), errorType.name());
+                orderId, correlationId, errorMessage, exceptionName, errorType.name());
     }
 
     @Override
@@ -236,7 +251,8 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                                 // Transacción atómica para insertarla en BD
                                 return transactionalOperator.transactional(
                                                 insertOrderData(orderId, correlationId, eventId, event)
-                                                        .then(Mono.just(new Order(orderId, "pending", correlationId)))
+                                                        // Usar el enum para el estado PENDING
+                                                        .then(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)))
                                                         .doOnSuccess(v -> log.info("Created order object for {}", orderId))
                                         )
                                         // Publicar evento después de la transacción

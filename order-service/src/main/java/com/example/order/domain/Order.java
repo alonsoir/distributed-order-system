@@ -1,45 +1,71 @@
 package com.example.order.domain;
 
-/**
- * Clase que representa una orden en el sistema.
- */
 public class Order {
-    private  Long id;
-    private  String status;
-    private  String correlationId;
+    private Long id;
+    private OrderStatus status;
+    private String correlationId;
 
     public Order() {
     }
-    public Order(Long id, String status, String correlationId) {
+
+    public Order(Long id, OrderStatus status, String correlationId) {
         this.id = id;
         this.status = status;
         this.correlationId = correlationId;
     }
 
-    // Getters tradicionales
+    // Constructor adicional para mantener compatibilidad
+    public Order(Long id, String statusValue, String correlationId) {
+        this.id = id;
+        this.status = OrderStatus.fromValue(statusValue);
+        this.correlationId = correlationId;
+    }
+
+    // Getters y setters
     public Long getId() {
         return id;
     }
 
-    public String getStatus() {
+    public OrderStatus getStatus() {
         return status;
+    }
+
+    public String getStatusValue() {
+        return status.getValue();
     }
 
     public String getCorrelationId() {
         return correlationId;
     }
 
-    // Métodos de estilo record para compatibilidad con los tests
+    // Métodos de estilo record
     public Long id() {
         return id;
     }
 
-    public String status() {
+    public OrderStatus status() {
         return status;
+    }
+
+    public String statusValue() {
+        return status.getValue();
     }
 
     public String correlationId() {
         return correlationId;
+    }
+
+    public void setId(long id) {
+        this.id = id;
+    }
+
+    public void setStatus(OrderStatus status) {
+        this.status = status;
+    }
+
+    // Setter adicional para mantener compatibilidad
+    public void setStatus(String statusValue) {
+        this.status = OrderStatus.fromValue(statusValue);
     }
 
     @Override
@@ -49,13 +75,5 @@ public class Order {
                 ", status='" + status + '\'' +
                 ", correlationId='" + correlationId + '\'' +
                 '}';
-    }
-
-    public void setId(long l) {
-        this.id = l;
-    }
-
-    public void setStatus(String completed) {
-        this.status = completed;
     }
 }

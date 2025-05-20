@@ -1,5 +1,6 @@
 package com.example.order.events;
 
+import com.example.order.domain.OrderStatus;
 import com.example.order.model.SagaStepType;
 import lombok.Getter;
 
@@ -49,8 +50,8 @@ public class OrderFailedEvent implements OrderEvent {
     }
 
     @Override
-    public OrderEventType getType() {
-        return OrderEventType.ORDER_FAILED;
+    public OrderStatus getType() {
+        return OrderStatus.ORDER_FAILED;
     }
 
     @Override

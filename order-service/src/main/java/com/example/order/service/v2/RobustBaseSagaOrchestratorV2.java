@@ -4,6 +4,8 @@ import com.example.order.config.CircuitBreakerCategory;
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
 import com.example.order.domain.DeliveryMode;
+import com.example.order.domain.OrderStateTransition;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
@@ -161,50 +163,93 @@ public abstract class RobustBaseSagaOrchestratorV2 {
                 .build();
     }
 
-    protected Mono<Order> updateOrderStatus(Long orderId, String status, String correlationId) {
-        if (orderId == null || status == null || correlationId == null) {
+    protected Mono<Order> updateOrderStatus(Long orderId, String statusValue, String correlationId) {
+        if (orderId == null || statusValue == null || correlationId == null) {
+            return Mono.error(new IllegalArgumentException("orderId, status, and correlationId cannot be null"));
+        }
+
+        // Convertir el valor de estado a enum
+        OrderStatus newStatus;
+        try {
+            newStatus = OrderStatus.fromValue(statusValue);
+        } catch (IllegalArgumentException e) {
+            return Mono.error(new IllegalArgumentException("Invalid status value: " + statusValue, e));
+        }
+
+        return updateOrderStatus(orderId, newStatus, correlationId);
+    }
+
+    protected Mono<Order> updateOrderStatus(Long orderId, OrderStatus newStatus, String correlationId) {
+        if (orderId == null || newStatus == null || correlationId == null) {
             return Mono.error(new IllegalArgumentException("orderId, status, and correlationId cannot be null"));
         }
 
         Map<String, String> context = ReactiveUtils.createContext(
                 "orderId", orderId.toString(),
                 "correlationId", correlationId,
-                "status", status
+                "status", newStatus.getValue()
         );
 
         Tag[] tags = new Tag[] {
-                Tag.of("status", status),
+                Tag.of("status", newStatus.getValue()),
                 Tag.of("correlation_id", correlationId)
         };
 
         Timer.Sample timer = Timer.start(meterRegistry);
 
+        // Obtener la función de resiliencia fuera del lambda para asegurar que sea final
+        Function<Mono<Order>, Mono<Order>> finalResilience = getResilienceFunction();
+
         return ReactiveUtils.withDiagnosticContext(context, () -> {
-            log.info("Updating order {} status to {}", orderId, status);
+            log.info("Updating order {} status to {}", orderId, newStatus);
 
-            // Asegurar que resilienceManager.applyResilience no cause NullPointerException
-            Function<Mono<Order>, Mono<Order>> resilience = Function.identity(); // Default a función identidad
-            try {
-                Function<Mono<Order>, Mono<Order>> tempResilience =
-                        resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS);
-                if (tempResilience != null) {
-                    resilience = tempResilience;
-                }
-            } catch (Exception e) {
-                log.warn("Error al obtener transformer de resiliencia para updateOrderStatus: {}, usando identidad", e.getMessage());
-            }
+            // Primero verificamos si la transición es válida
+            return findExistingOrder(orderId)
+                    .flatMap(existingOrder -> {
+                        // Verificar si la transición es válida
+                        if (!OrderStateTransition.isValidTransition(existingOrder.status(), newStatus)) {
+                            log.warn("Invalid state transition from {} to {} for order {}",
+                                    existingOrder.status(), newStatus, orderId);
 
-            return eventRepository.updateOrderStatus(orderId, status, correlationId)
-                    .doOnSuccess(order -> {
-                        log.info("Updated order {} status to {}", orderId, status);
-                        timer.stop(meterRegistry.timer("saga.order.status.update", Tags.of(tags)));
-                    })
-                    .doOnError(e -> {
-                        log.error("Failed to update order {} status: {}", orderId, e.getMessage(), e);
-                        meterRegistry.counter("saga.order.status.error", Tags.of(tags)).increment();
-                    })
-                    .transform(resilience); // Usamos la función resilience que ahora es segura
+                            // Opción 1: Retornar la orden sin cambios
+                            return Mono.just(existingOrder);
+
+                            // Opción 2: Rechazar con error (descomentar si prefieres este comportamiento)
+                            // return Mono.error(new IllegalStateException(
+                            //         "Invalid state transition from " + existingOrder.status() + " to " + newStatus));
+                        }
+
+                        // La transición es válida, procedemos con la actualización
+                        return eventRepository.updateOrderStatus(orderId, newStatus.getValue(), correlationId)
+                                .doOnSuccess(order -> {
+                                    log.info("Updated order {} status to {}", orderId, newStatus);
+                                    timer.stop(meterRegistry.timer("saga.order.status.update", Tags.of(tags)));
+                                })
+                                .doOnError(e -> {
+                                    log.error("Failed to update order {} status: {}", orderId, e.getMessage(), e);
+                                    meterRegistry.counter("saga.order.status.error", Tags.of(tags)).increment();
+                                })
+                                .transform(finalResilience); // Usamos la función resilience que ahora es final
+                    });
         });
+    }
+
+    // Método separado para obtener la función de resiliencia
+    private Function<Mono<Order>, Mono<Order>> getResilienceFunction() {
+        // Default a función identidad
+        Function<Mono<Order>, Mono<Order>> resilience = Function.identity();
+
+        try {
+            Function<Mono<Order>, Mono<Order>> tempResilience =
+                    resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS);
+            if (tempResilience != null) {
+                resilience = tempResilience;
+            }
+        } catch (Exception e) {
+            log.warn("Error al obtener transformer de resiliencia para updateOrderStatus: {}, usando identidad", e.getMessage());
+        }
+
+        return resilience;
     }
 
     /**
@@ -247,9 +292,6 @@ public abstract class RobustBaseSagaOrchestratorV2 {
         }
     }
 
-    /**
-     * Ejecuta compensación con manejo de errores y reintentos
-     */
     protected Mono<Void> executeRobustCompensation(SagaStep step, CompensationManager compensationManager) {
         if (step == null || step.getCompensation() == null) {
             log.warn("No compensation defined for step {}",
@@ -271,8 +313,18 @@ public abstract class RobustBaseSagaOrchestratorV2 {
 
             Timer.Sample timer = Timer.start(meterRegistry);
 
-            return eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "STARTED")
-                    .then(compensationManager.executeCompensation(step))
+            // Primero, registramos el inicio de la compensación
+            Mono<Void> startLog = eventRepository.insertCompensationLog(
+                    step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "STARTED");
+
+            // Luego ejecutamos la compensación con verificación de null
+            Mono<Void> executeComp = compensationManager.executeCompensation(step);
+            if (executeComp == null) {
+                log.warn("CompensationManager.executeCompensation returned null for step {}", step.getName());
+                executeComp = Mono.empty(); // Fallback seguro
+            }
+
+            Mono<Void> safeExecuteComp = executeComp
                     .timeout(SAGA_STEP_TIMEOUT)
                     .doOnSuccess(v -> {
                         log.info("Compensation completed successfully for step {}", step.getName());
@@ -285,15 +337,32 @@ public abstract class RobustBaseSagaOrchestratorV2 {
                                 step.getName(), e.getMessage(), e);
                         meterRegistry.counter("saga.compensation.error",
                                 "step", step.getName()).increment();
-                    })
-                    .then(eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "COMPLETED"))
+                    });
+
+            // Finalmente, registramos la finalización (exitosa o fallida)
+            Mono<Void> completionLog = Mono.defer(() ->
+                    eventRepository.insertCompensationLog(
+                            step.getName(), step.getOrderId(), step.getCorrelationId(),
+                            step.getEventId(), "COMPLETED")
+            );
+
+            // Encadenamos las operaciones, con manejo de errores
+            return startLog
+                    .then(safeExecuteComp)
+                    .then(completionLog)
                     .onErrorResume(e -> {
-                        return eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "FAILED: " + e.getMessage())
-                                .then(triggerCompensationFailureAlert(step, e))
-                                .then(Mono.empty()); // No propagamos el error para no bloquear
+                        // En caso de error, registramos el fallo y alertamos
+                        return eventRepository.insertCompensationLog(
+                                        step.getName(), step.getOrderId(), step.getCorrelationId(),
+                                        step.getEventId(), "FAILED: " + e.getMessage())
+                                .then(triggerCompensationFailureAlert(step, e));
                     })
                     .subscribeOn(Schedulers.boundedElastic());
         });
+    }
+
+    protected boolean isValidStateTransition(Order order, OrderStatus newStatus) {
+        return OrderStateTransition.isValidTransition(order.status(), newStatus);
     }
 
     /**
@@ -335,13 +404,11 @@ public abstract class RobustBaseSagaOrchestratorV2 {
                 step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), status);
     }
 
-    /**
-     * Registra un fallo de paso en base de datos para análisis posterior
-     */
     protected Mono<Void> recordStepFailure(SagaStep step, Throwable error, ErrorType errorType) {
+        String exceptionName = error.getClass().getSimpleName(); // Usa getSimpleName() en lugar de getName()
         return eventRepository.recordStepFailure(
                 step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(),
-                error.getMessage(), error.getClass().getName(), errorType.name());
+                error.getMessage(), exceptionName, errorType.name());
     }
 
     /**

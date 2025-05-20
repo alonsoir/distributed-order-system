@@ -2,8 +2,9 @@ package com.example.order.repository;
 
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderEvent;
-import com.example.order.events.OrderEventType;
+
 import com.example.order.repository.events.EventHistoryRepository;
 import com.example.order.repository.events.ProcessedEventRepository;
 import com.example.order.repository.orders.OrderRepository;
@@ -138,12 +139,12 @@ public class CompositeEventRepositorySagaIntegrationTest {
         when(orderEvent.getOrderId()).thenReturn(orderId);
         when(orderEvent.getCorrelationId()).thenReturn(correlationId);
         when(orderEvent.getEventId()).thenReturn(eventId);
-        when(orderEvent.getType()).thenReturn(OrderEventType.ORDER_CREATED);
+        when(orderEvent.getType()).thenReturn(OrderStatus.ORDER_CREATED);
 
         // Mock de la orden
         Order mockOrder = mock(Order.class);
         when(mockOrder.id()).thenReturn(orderId);
-        when(mockOrder.status()).thenReturn("pending");
+        when(mockOrder.status()).thenReturn(OrderStatus.ORDER_PENDING);
 
         // Configurar comportamiento para el flujo completo
         // 1. Verificar si el evento ya está procesado (no lo está)
@@ -251,7 +252,7 @@ public class CompositeEventRepositorySagaIntegrationTest {
         when(orderEvent.getEventId()).thenReturn(eventId);
         when(orderEvent.getOrderId()).thenReturn(orderId);
         when(orderEvent.getCorrelationId()).thenReturn(correlationId);
-        when(orderEvent.getType()).thenReturn(OrderEventType.STOCK_RESERVED);
+        when(orderEvent.getType()).thenReturn(OrderStatus.STOCK_RESERVED);
 
         // Configurar comportamiento de error
         RuntimeException stockError = new RuntimeException("Insufficient stock available");
@@ -278,9 +279,9 @@ public class CompositeEventRepositorySagaIntegrationTest {
         // Configurar actualización de estado a fallido
         Order failedOrder = mock(Order.class);
         when(failedOrder.id()).thenReturn(orderId);
-        when(failedOrder.status()).thenReturn("failed");
+        when(failedOrder.status()).thenReturn(OrderStatus.ORDER_FAILED);
 
-        when(orderRepository.updateOrderStatus(orderId, "failed", correlationId))
+        when(orderRepository.updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId))
                 .thenReturn(Mono.just(failedOrder));
 
         // Ejecutar flujo con error

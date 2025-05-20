@@ -1,6 +1,7 @@
 package com.example.order.service.unit;
 
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
@@ -96,10 +97,11 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .thenReturn(Mono.empty());
 
         // Mock respuesta de EventRepository
+
         when(eventRepository.isEventProcessed(anyString())).thenReturn(Mono.just(false));
-        when(eventRepository.findOrderById(anyLong())).thenReturn(Mono.just(new Order(orderId, "pending", correlationId)));
+        when(eventRepository.findOrderById(anyLong())).thenReturn(Mono.just(new Order(orderId, OrderStatus.PENDING, correlationId)));
         when(eventRepository.saveOrderData(anyLong(), anyString(), anyString(), any(OrderEvent.class))).thenReturn(Mono.empty());
-        when(eventRepository.updateOrderStatus(anyLong(), anyString(), anyString())).thenReturn(Mono.just(new Order(orderId, "pending", correlationId)));
+        when(eventRepository.updateOrderStatus(anyLong(), anyString(), anyString())).thenReturn(Mono.just(new Order(orderId, OrderStatus.PENDING, correlationId)));
         when(eventRepository.insertStatusAuditLog(anyLong(), anyString(), anyString())).thenReturn(Mono.empty());
         when(eventRepository.saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
         when(eventRepository.recordSagaFailure(anyLong(), anyString(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
@@ -284,7 +286,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .assertNext(order -> {
                     assertNotNull(order);
                     assertEquals(orderId, order.id());
-                    assertEquals("pending", order.status());
+                    assertEquals(OrderStatus.PENDING, order.status());
                     assertEquals(correlationId, order.correlationId());
                 })
                 .verifyComplete();
@@ -327,7 +329,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .assertNext(order -> {
                     assertNotNull(order);
                     assertEquals(orderId, order.id());
-                    assertEquals("pending", order.status());
+                    assertEquals(OrderStatus.PENDING, order.status());
                     assertEquals(correlationId, order.correlationId());
                 })
                 .verifyComplete();
@@ -443,8 +445,8 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
 
     @Test
     void testExecuteOrderSaga_PendingOrderNotProceedingToNextStep() {
-        // Simular un estado de orden diferente a "pending" después de crearla
-        Order nonPendingOrder = new Order(orderId, "another_status", correlationId);
+        // Simular un estado de orden diferente a "pending"
+        Order nonPendingOrder = new Order(orderId, OrderStatus.COMPLETED, correlationId);
 
         // Mock para que updateOrderStatus devuelva una orden con estado no "pending"
         when(eventRepository.updateOrderStatus(anyLong(), anyString(), anyString()))
@@ -459,7 +461,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .assertNext(order -> {
                     assertNotNull(order);
                     assertEquals(orderId, order.id());
-                    assertEquals("another_status", order.status());
+                    assertEquals(OrderStatus.COMPLETED, order.status());
                     assertEquals(correlationId, order.correlationId());
                 })
                 .verifyComplete();

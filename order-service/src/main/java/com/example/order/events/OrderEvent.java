@@ -1,5 +1,7 @@
 package com.example.order.events;
 
+import com.example.order.domain.OrderStatus;
+
 /**
  * Interfaz que representa un evento de orden en el sistema.
  */
@@ -23,7 +25,7 @@ public interface OrderEvent {
     /**
      * @return El tipo de evento
      */
-    OrderEventType getType();
+    OrderStatus getType();
 
     /**
      * @return Representación JSON del evento

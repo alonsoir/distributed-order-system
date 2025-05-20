@@ -2,6 +2,7 @@ package com.example.order.repository;
 
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderEvent;
 import com.example.order.repository.events.EventHistoryRepository;
 import com.example.order.repository.events.ProcessedEventRepository;
@@ -18,8 +19,7 @@ import reactor.util.retry.Retry;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Size;
+
 import java.time.Duration;
 
 /**
@@ -155,7 +155,7 @@ public class CompositeEventRepository implements EventRepository {
     }
 
     @Override
-    public Mono<Order> updateOrderStatus(@NotNull Long orderId, @NotBlank String status,
+    public Mono<Order> updateOrderStatus(@NotNull Long orderId, @NotBlank OrderStatus status,
                                          @NotBlank String correlationId) {
         return orderRepository.updateOrderStatus(orderId, status, correlationId)
                 .doOnError(e -> log.error("Error updating order status for orderId={} to status={}: {}",
@@ -164,7 +164,7 @@ public class CompositeEventRepository implements EventRepository {
     }
 
     @Override
-    public Mono<Void> insertStatusAuditLog(@NotNull Long orderId, @NotBlank String status,
+    public Mono<Void> insertStatusAuditLog(@NotNull Long orderId, @NotBlank OrderStatus status,
                                            @NotBlank String correlationId) {
         return orderRepository.insertStatusAuditLog(orderId, status, correlationId)
                 .doOnError(e -> log.error("Error inserting status audit log for orderId={}, status={}: {}",
@@ -175,7 +175,7 @@ public class CompositeEventRepository implements EventRepository {
     @Override
     public Mono<Void> insertCompensationLog(@NotBlank String stepName, @NotNull Long orderId,
                                             @NotBlank String correlationId, @NotBlank String eventId,
-                                            @NotBlank String status) {
+                                            @NotBlank OrderStatus status) {
         return sagaFailureRepository.insertCompensationLog(stepName, orderId, correlationId, eventId, status)
                 .doOnError(e -> log.error("Error inserting compensation log for orderId={}, stepName={}: {}",
                         orderId, stepName, e.getMessage()))

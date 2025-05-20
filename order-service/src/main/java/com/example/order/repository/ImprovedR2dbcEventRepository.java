@@ -1,6 +1,8 @@
 package com.example.order.repository;
 
 import java.util.concurrent.atomic.AtomicInteger;
+
+import com.example.order.domain.OrderStatus;
 import reactor.core.publisher.Mono;
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.Order;
@@ -523,7 +525,7 @@ public class ImprovedR2dbcEventRepository implements EventRepository {
             // Paso 1: Insertar orden
             Mono<Void> insertOrderMono = databaseClient.sql(SQL_INSERT_ORDER)
                     .bind("id", orderId)
-                    .bind("status", "pending")
+                    .bind("status", OrderStatus.ORDER_PENDING.getValue())
                     .bind("correlationId", sanitizedCorrelationId)
                     .bind("deliveryMode", deliveryMode.name())
                     .then()
@@ -579,7 +581,7 @@ public class ImprovedR2dbcEventRepository implements EventRepository {
             @NotNull(message = "status cannot be null")
             @NotBlank(message = "status cannot be empty")
             @Size(max = MAX_STATUS_LENGTH, message = "status must be less than {max} characters")
-            String status,
+            OrderStatus status,
             @NotNull(message = "correlationId cannot be null")
             @NotBlank(message = "correlationId cannot be empty")
             @Size(max = MAX_CORRELATION_ID_LENGTH, message = "correlationId must be less than {max} characters")
@@ -589,12 +591,12 @@ public class ImprovedR2dbcEventRepository implements EventRepository {
         if (orderId == null) {
             return Mono.error(new InvalidParameterException("orderId cannot be null"));
         }
-        validateStatus(status);
+        validateStatus(String.valueOf(status));
         validateCorrelationId(correlationId);
 
         log.info("Updating order {} status to {}", orderId, status);
 
-        String sanitizedStatus = sanitizeInput(status);
+        String sanitizedStatus = sanitizeInput(String.valueOf(status));
         String sanitizedCorrelationId = sanitizeInput(correlationId);
 
         // Ejecutar actualización con transacción
@@ -607,7 +609,7 @@ public class ImprovedR2dbcEventRepository implements EventRepository {
                     .doOnSuccess(v -> log.info("Updated order {} status to {}", orderId, sanitizedStatus));
 
             // Paso 2: Insertar registro en historial de estados
-            Mono<Void> insertHistoryMono = insertStatusAuditLog(orderId, sanitizedStatus, sanitizedCorrelationId);
+            Mono<Void> insertHistoryMono = insertStatusAuditLog(orderId, status, sanitizedCorrelationId);
 
             // Ejecutar ambas operaciones y retornar la orden actualizada
             return updateStatusMono
@@ -648,7 +650,7 @@ public class ImprovedR2dbcEventRepository implements EventRepository {
             @NotNull(message = "status cannot be null")
             @NotBlank(message = "status cannot be empty")
             @Size(max = MAX_STATUS_LENGTH, message = "status must be less than {max} characters")
-            String status,
+            OrderStatus status,
             @NotNull(message = "correlationId cannot be null")
             @NotBlank(message = "correlationId cannot be empty")
             @Size(max = MAX_CORRELATION_ID_LENGTH, message = "correlationId must be less than {max} characters")
@@ -658,10 +660,10 @@ public class ImprovedR2dbcEventRepository implements EventRepository {
         if (orderId == null) {
             return Mono.error(new InvalidParameterException("orderId cannot be null"));
         }
-        validateStatus(status);
+        validateStatus(String.valueOf(status));
         validateCorrelationId(correlationId);
 
-        String sanitizedStatus = sanitizeInput(status);
+        String sanitizedStatus = sanitizeInput(String.valueOf(status));
         String sanitizedCorrelationId = sanitizeInput(correlationId);
 
         return databaseClient.sql(SQL_INSERT_STATUS_HISTORY)
@@ -709,7 +711,7 @@ public class ImprovedR2dbcEventRepository implements EventRepository {
             @NotNull(message = "status cannot be null")
             @NotBlank(message = "status cannot be empty")
             @Size(max = MAX_STATUS_LENGTH, message = "status must be less than {max} characters")
-            String status) {
+            OrderStatus status) {
 
         validateStepName(stepName);
         if (orderId == null) {
@@ -717,12 +719,12 @@ public class ImprovedR2dbcEventRepository implements EventRepository {
         }
         validateCorrelationId(correlationId);
         validateEventId(eventId);
-        validateStatus(status);
+        validateStatus(String.valueOf(status));
 
         String sanitizedStepName = sanitizeInput(stepName);
         String sanitizedCorrelationId = sanitizeInput(correlationId);
         String sanitizedEventId = sanitizeInput(eventId);
-        String sanitizedStatus = sanitizeInput(status);
+        String sanitizedStatus = sanitizeInput(String.valueOf(status));
 
         return databaseClient.sql(SQL_INSERT_COMPENSATION_LOG)
                 .bind("stepName", sanitizedStepName)

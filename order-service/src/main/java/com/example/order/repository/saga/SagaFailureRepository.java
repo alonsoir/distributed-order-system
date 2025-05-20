@@ -1,6 +1,7 @@
 package com.example.order.repository.saga;
 
 import com.example.order.domain.DeliveryMode;
+import com.example.order.domain.OrderStatus;
 import com.example.order.exception.*;
 import com.example.order.repository.base.AbstractReactiveRepository;
 import com.example.order.repository.base.SecurityUtils;
@@ -83,16 +84,16 @@ public class SagaFailureRepository extends AbstractReactiveRepository {
                 "No error message provided";
 
         String sanitizedErrorType = errorType != null ?
-                securityUtils.sanitizeInput(validationUtils.truncateIfNeeded(errorType, validationUtils.getMaxErrorTypeLength())) :
+                securityUtils.sanitizeStringInput(validationUtils.truncateIfNeeded(errorType, validationUtils.getMaxErrorTypeLength())) :
                 "UNKNOWN_ERROR";
 
         String sanitizedErrorCategory = errorCategory != null ?
-                securityUtils.sanitizeInput(validationUtils.truncateIfNeeded(errorCategory, validationUtils.getMaxErrorCategoryLength())) :
+                securityUtils.sanitizeStringInput(validationUtils.truncateIfNeeded(errorCategory, validationUtils.getMaxErrorCategoryLength())) :
                 "UNKNOWN";
 
-        String sanitizedStepName = securityUtils.sanitizeInput(stepName);
-        String sanitizedCorrelationId = securityUtils.sanitizeInput(correlationId);
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
+        String sanitizedStepName = securityUtils.sanitizeStringInput(stepName);
+        String sanitizedCorrelationId = securityUtils.sanitizeStringInput(correlationId);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
 
         return databaseClient.sql(SQL_INSERT_STEP_FAILURE)
                 .bind("stepName", sanitizedStepName)
@@ -158,11 +159,11 @@ public class SagaFailureRepository extends AbstractReactiveRepository {
                 "No error message provided";
 
         String sanitizedErrorType = errorType != null ?
-                securityUtils.sanitizeInput(validationUtils.truncateIfNeeded(errorType, validationUtils.getMaxErrorTypeLength())) :
+                securityUtils.sanitizeStringInput(validationUtils.truncateIfNeeded(errorType, validationUtils.getMaxErrorTypeLength())) :
                 "UNKNOWN_ERROR";
 
         String delivery = deliveryMode.name();
-        String sanitizedCorrelationId = securityUtils.sanitizeInput(correlationId);
+        String sanitizedCorrelationId = securityUtils.sanitizeStringInput(correlationId);
 
         return databaseClient.sql(SQL_INSERT_SAGA_FAILURE)
                 .bind("orderId", orderId)
@@ -200,18 +201,18 @@ public class SagaFailureRepository extends AbstractReactiveRepository {
             @NotNull(message = "status cannot be null")
             @NotBlank(message = "status cannot be empty")
             @Size(max = 64, message = "status must be less than {max} characters")
-            String status) {
+            OrderStatus status) {
 
         validationUtils.validateStepName(stepName);
         validationUtils.validateOrderId(orderId);
         validationUtils.validateCorrelationId(correlationId);
         validationUtils.validateEventId(eventId);
-        validationUtils.validateStatus(status);
 
-        String sanitizedStepName = securityUtils.sanitizeInput(stepName);
-        String sanitizedCorrelationId = securityUtils.sanitizeInput(correlationId);
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
-        String sanitizedStatus = securityUtils.sanitizeInput(status);
+
+        String sanitizedStepName = securityUtils.sanitizeStringInput(stepName);
+        String sanitizedCorrelationId = securityUtils.sanitizeStringInput(correlationId);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
+        String sanitizedStatus = validationUtils.validateStatus(status);
 
         return databaseClient.sql(SQL_INSERT_COMPENSATION_LOG)
                 .bind("stepName", sanitizedStepName)

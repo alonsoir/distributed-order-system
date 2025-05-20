@@ -58,7 +58,7 @@ public class ProcessedEventRepository extends AbstractReactiveRepository {
             String eventId) {
 
         validationUtils.validateEventId(eventId);
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
 
         return databaseClient.sql(SQL_SELECT_EVENT_PROCESSED)
                 .bind("eventId", sanitizedEventId)
@@ -102,7 +102,7 @@ public class ProcessedEventRepository extends AbstractReactiveRepository {
         validationUtils.validateEventId(eventId);
         validationUtils.validateDeliveryMode(deliveryMode);
 
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
 
         return databaseClient.sql(SQL_SELECT_EVENT_PROCESSED_WITH_DELIVERY_MODE)
                 .bind("eventId", sanitizedEventId)
@@ -144,7 +144,7 @@ public class ProcessedEventRepository extends AbstractReactiveRepository {
             String eventId) {
 
         validationUtils.validateEventId(eventId);
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
 
         return databaseClient.sql(SQL_INSERT_PROCESSED_EVENT)
                 .bind("eventId", sanitizedEventId)
@@ -178,7 +178,7 @@ public class ProcessedEventRepository extends AbstractReactiveRepository {
         validationUtils.validateEventId(eventId);
         validationUtils.validateDeliveryMode(deliveryMode);
 
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
 
         return databaseClient.sql(SQL_INSERT_PROCESSED_EVENT_WITH_DELIVERY_MODE)
                 .bind("eventId", sanitizedEventId)
@@ -214,7 +214,7 @@ public class ProcessedEventRepository extends AbstractReactiveRepository {
         validationUtils.validateEventId(eventId);
         validationUtils.validateDeliveryMode(deliveryMode);
 
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
 
         return databaseClient.sql(SQL_CHECK_AND_MARK_PROCESSED)
                 .bind("eventId", sanitizedEventId)

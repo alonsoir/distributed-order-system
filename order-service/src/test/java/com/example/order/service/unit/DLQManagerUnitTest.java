@@ -1,7 +1,8 @@
 package com.example.order.service.unit;
 
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderEvent;
-import com.example.order.events.OrderEventType;
+
 import com.example.order.service.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.lettuce.core.RedisException;
@@ -149,7 +150,7 @@ class DLQManagerUnitTest {
     }
 
     @Test
-    void shouldProcessDLQWhenRedisIsAvailable() throws Exception {
+    void shouldProcessDLQWhenRedisIsAvailable() {
         // Arrange
         Map<String, Object> mockEvent = createMockDLQEntry();
         when(listOperations.rightPop(eq(DLQ_KEY)))
@@ -316,7 +317,7 @@ class DLQManagerUnitTest {
         when(mockEvent.getEventId()).thenReturn(TEST_EVENT_ID);
         when(mockEvent.getCorrelationId()).thenReturn(TEST_CORRELATION_ID);
         when(mockEvent.getOrderId()).thenReturn(TEST_ORDER_ID);
-        when(mockEvent.getType()).thenReturn(OrderEventType.ORDER_CREATED);
+        when(mockEvent.getType()).thenReturn(OrderStatus.ORDER_CREATED);
         when(mockEvent.toJson()).thenReturn("{\"eventId\":\"" + TEST_EVENT_ID + "\"}");
         return mockEvent;
     }
@@ -326,7 +327,7 @@ class DLQManagerUnitTest {
         entry.put("eventId", TEST_EVENT_ID);
         entry.put("correlationId", TEST_CORRELATION_ID);
         entry.put("orderId", TEST_ORDER_ID);
-        entry.put("type", "ORDER_CREATED");
+        entry.put("type", OrderStatus.ORDER_CREATED);
         entry.put("topic", TEST_TOPIC);
         entry.put("payload", "{\"eventId\":\"" + TEST_EVENT_ID + "\",\"type\":\"ORDER_CREATED\"}");
         entry.put("error", "Test error");

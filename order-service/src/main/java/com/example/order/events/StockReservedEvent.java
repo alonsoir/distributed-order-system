@@ -1,5 +1,6 @@
 package com.example.order.events;
 
+import com.example.order.domain.OrderStatus;
 import lombok.Getter;
 
 @Getter
@@ -38,8 +39,8 @@ public class StockReservedEvent implements OrderEvent {
     }
 
     @Override
-    public OrderEventType getType() {
-        return OrderEventType.STOCK_RESERVED;
+    public OrderStatus getType() {
+        return OrderStatus.STOCK_RESERVED;
     }
 
     @Override

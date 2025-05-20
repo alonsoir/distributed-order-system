@@ -4,6 +4,7 @@ import com.example.order.config.CircuitBreakerCategory;
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
 import com.example.order.domain.DeliveryMode;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
@@ -114,11 +115,11 @@ public abstract class BaseSagaOrchestratorV2 {
     /**
      * Actualiza el estado de una orden con registro en historial
      */
-    protected Mono<Order> updateOrderStatus(Long orderId, String status, String correlationId) {
+    protected Mono<Order> updateOrderStatus(Long orderId, OrderStatus status, String correlationId) {
         Map<String, String> context = ReactiveUtils.createContext(
                 "orderId", orderId.toString(),
                 "correlationId", correlationId,
-                "status", status
+                "status", status.getValue()
         );
 
         return ReactiveUtils.withDiagnosticContext(context, () ->
@@ -179,8 +180,7 @@ public abstract class BaseSagaOrchestratorV2 {
                             step.getName(),
                             step.getOrderId(),
                             step.getCorrelationId(),
-                            step.getEventId(),
-                            "INITIATED"))
+                            step.getEventId(),OrderStatus.ORDER_CREATED))
                     // Ejecutar la compensación
                     .then(compensationManager.executeCompensation(step))
                     // Actualizar estado de la compensación a completado
@@ -189,7 +189,8 @@ public abstract class BaseSagaOrchestratorV2 {
                             step.getOrderId(),
                             step.getCorrelationId(),
                             step.getEventId(),
-                            "COMPLETED"))
+                            OrderStatus.ORDER_CREATED))
+
                     .then(Mono.error(e)); // Propagamos el error original
         });
     }

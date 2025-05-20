@@ -2,6 +2,7 @@ package com.example.order.repository;
 
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -229,7 +230,7 @@ public class R2dbcEventRepository implements EventRepository {
     }
 
     @Override
-    public Mono<Order> updateOrderStatus(Long orderId, String status, String correlationId) {
+    public Mono<Order> updateOrderStatus(Long orderId, OrderStatus status, String correlationId) {
         if (orderId == null || status == null || correlationId == null) {
             return Mono.error(new IllegalArgumentException("orderId, status, and correlationId cannot be null"));
         }
@@ -237,7 +238,7 @@ public class R2dbcEventRepository implements EventRepository {
         log.info("Updating order {} status to {}", orderId, status);
 
         return databaseClient.sql("UPDATE orders SET status = :status, updated_at = CURRENT_TIMESTAMP WHERE id = :id")
-                .bind("status", status)
+                .bind("status", status.getValue())
                 .bind("id", orderId)
                 .then()
                 .doOnSuccess(v -> log.info("Updated order {} status to {}", orderId, status))
@@ -249,12 +250,12 @@ public class R2dbcEventRepository implements EventRepository {
     }
 
     @Override
-    public Mono<Void> insertStatusAuditLog(Long orderId, String status, String correlationId) {
+    public Mono<Void> insertStatusAuditLog(Long orderId, OrderStatus status, String correlationId) {
         return databaseClient.sql(
                         "INSERT INTO order_status_history (order_id, status, correlation_id, timestamp) " +
                                 "VALUES (:orderId, :status, :correlationId, CURRENT_TIMESTAMP)")
                 .bind("orderId", orderId)
-                .bind("status", status)
+                .bind("status", status.getValue())
                 .bind("correlationId", correlationId)
                 .then()
                 .onErrorResume(e -> {
@@ -264,7 +265,7 @@ public class R2dbcEventRepository implements EventRepository {
     }
 
     @Override
-    public Mono<Void> insertCompensationLog(String stepName, Long orderId, String correlationId, String eventId, String status) {
+    public Mono<Void> insertCompensationLog(String stepName, Long orderId, String correlationId, String eventId, OrderStatus status) {
         return databaseClient.sql(
                         "INSERT INTO compensation_log (step_name, order_id, correlation_id, event_id, status, timestamp) " +
                                 "VALUES (:stepName, :orderId, :correlationId, :eventId, :status, CURRENT_TIMESTAMP)")
@@ -272,7 +273,7 @@ public class R2dbcEventRepository implements EventRepository {
                 .bind("orderId", orderId)
                 .bind("correlationId", correlationId)
                 .bind("eventId", eventId)
-                .bind("status", status)
+                .bind("status", status.getValue())
                 .then()
                 .onErrorResume(e -> {
                     log.error("Failed to log compensation status: {}", e.getMessage());

@@ -104,11 +104,11 @@ public class EventHistoryRepository extends AbstractReactiveRepository {
         validationUtils.validateOutcome(outcome);
 
         String delivery = deliveryMode != null ? deliveryMode.name() : DeliveryMode.AT_LEAST_ONCE.name();
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
-        String sanitizedCorrelationId = securityUtils.sanitizeInput(correlationId);
-        String sanitizedEventType = securityUtils.sanitizeInput(eventType);
-        String sanitizedOperation = securityUtils.sanitizeInput(operation);
-        String sanitizedOutcome = securityUtils.sanitizeInput(outcome);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
+        String sanitizedCorrelationId = securityUtils.sanitizeStringInput(correlationId);
+        String sanitizedEventType = securityUtils.sanitizeStringInput(eventType);
+        String sanitizedOperation = securityUtils.sanitizeStringInput(operation);
+        String sanitizedOutcome = securityUtils.sanitizeStringInput(outcome);
 
         return databaseClient.sql(SQL_INSERT_EVENT_HISTORY)
                 .bind("eventId", sanitizedEventId)

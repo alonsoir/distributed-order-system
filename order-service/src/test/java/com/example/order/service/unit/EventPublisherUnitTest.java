@@ -1,9 +1,9 @@
 package com.example.order.service.unit;
 
+import com.example.order.domain.OrderStatus;
 import org.springframework.data.redis.connection.stream.RecordId;
 
 import com.example.order.events.OrderEvent;
-import com.example.order.events.OrderEventType;
 import com.example.order.service.DLQManager;
 import com.example.order.service.EventPublisher;
 import com.example.order.service.EventPublishOutcome;
@@ -90,8 +90,8 @@ class EventPublisherUnitTest {
             private final String testEventId = UUID.randomUUID().toString();
 
             @Override
-            public OrderEventType getType() {
-                return OrderEventType.ORDER_CREATED;
+            public OrderStatus getType() {
+                return OrderStatus.ORDER_CREATED;
             }
 
             @Override
@@ -404,8 +404,8 @@ class EventPublisherUnitTest {
             private final String testEventId = UUID.randomUUID().toString();
 
             @Override
-            public OrderEventType getType() {
-                return OrderEventType.ORDER_CREATED;
+            public OrderStatus getType() {
+                return OrderStatus.ORDER_CREATED;
             }
 
             @Override

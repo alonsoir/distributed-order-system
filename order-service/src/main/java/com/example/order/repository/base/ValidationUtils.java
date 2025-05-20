@@ -1,6 +1,7 @@
 package com.example.order.repository.base;
 
 import com.example.order.domain.DeliveryMode;
+import com.example.order.domain.OrderStatus;
 import com.example.order.exception.InvalidParameterException;
 
 /**
@@ -72,12 +73,42 @@ public class ValidationUtils {
         }
     }
 
-    public void validateStatus(String status) {
-        if (status == null || status.isBlank()) {
-            throw new InvalidParameterException("status cannot be null or empty");
+    public String validateStatus(OrderStatus status) {
+        if (status == null) {
+            throw new InvalidParameterException("status cannot be null");
         }
-        if (status.length() > MAX_STATUS_LENGTH) {
-            throw new InvalidParameterException("status must be less than " + MAX_STATUS_LENGTH + " characters");
+        return status.getValue();
+        // No es necesario validar nada más, ya que Java garantiza que solo puede ser uno de los valores del enum
+    }
+
+    /*Por definir, esto debería ir en un verdadero repositorio de dominio y eventos, pero por ahora lo dejo aquí.
+    Las tuplas y los eventos deberían estar siempre sincronizados, pero estos evolucionan de forma independiente.
+    * */
+    public void validateStatusTransition(OrderStatus currentStatus, OrderStatus newStatus) {
+        if (currentStatus == null || newStatus == null) {
+            throw new InvalidParameterException("status cannot be null");
+        }
+
+        // Ejemplo de reglas de transición
+        if (currentStatus == OrderStatus.ORDER_FAILED && newStatus != OrderStatus.ORDER_CREATED) {
+            throw new InvalidParameterException("Cannot transition from ORDER_FAILED to " + newStatus);
+        }
+
+        if (currentStatus == OrderStatus.ORDER_COMPLETED && newStatus != OrderStatus.ORDER_CREATED) {
+            throw new InvalidParameterException("Cannot transition from ORDER_COMPLETED to " + newStatus);
+        }
+
+        // Otras reglas de transición según la lógica de negocio
+        if (currentStatus == OrderStatus.ORDER_CREATED && newStatus != OrderStatus.ORDER_PENDING) {
+            throw new InvalidParameterException("From ORDER_CREATED you can only transition to ORDER_PENDING");
+        }
+
+        if (currentStatus == OrderStatus.ORDER_PENDING && newStatus != OrderStatus.STOCK_RESERVED && newStatus != OrderStatus.ORDER_FAILED) {
+            throw new InvalidParameterException("From ORDER_PENDING you can only transition to STOCK_RESERVED or ORDER_FAILED");
+        }
+
+        if (currentStatus == OrderStatus.STOCK_RESERVED && newStatus != OrderStatus.ORDER_COMPLETED && newStatus != OrderStatus.ORDER_FAILED) {
+            throw new InvalidParameterException("From STOCK_RESERVED you can only transition to ORDER_COMPLETED or ORDER_FAILED");
         }
     }
 

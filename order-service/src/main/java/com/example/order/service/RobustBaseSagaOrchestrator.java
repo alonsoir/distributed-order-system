@@ -3,6 +3,7 @@ package com.example.order.service;
 import com.example.order.config.CircuitBreakerCategory;
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
@@ -162,7 +163,7 @@ public abstract class RobustBaseSagaOrchestrator {
                 .build();
     }
 
-    protected Mono<Order> updateOrderStatus(Long orderId, String status, String correlationId) {
+    protected Mono<Order> updateOrderStatus(Long orderId, OrderStatus status, String correlationId) {
         if (orderId == null || status == null || correlationId == null) {
             return Mono.error(new IllegalArgumentException("orderId, status, and correlationId cannot be null"));
         }
@@ -170,11 +171,11 @@ public abstract class RobustBaseSagaOrchestrator {
         Map<String, String> context = ReactiveUtils.createContext(
                 "orderId", orderId.toString(),
                 "correlationId", correlationId,
-                "status", status
+                "status", status.getValue()
         );
 
         Tag[] tags = new Tag[] {
-                Tag.of("status", status),
+                Tag.of("status", status.getValue()),
                 Tag.of("correlation_id", correlationId)
         };
 
@@ -211,7 +212,7 @@ public abstract class RobustBaseSagaOrchestrator {
     /**
      * Insertar registro de auditoría para actualización de estado
      */
-    protected Mono<Void> insertUpdateStatusAuditLog(Long orderId, String status, String correlationId) {
+    protected Mono<Void> insertUpdateStatusAuditLog(Long orderId, OrderStatus status, String correlationId) {
         return eventRepository.insertStatusAuditLog(orderId, status, correlationId);
     }
 
@@ -272,7 +273,7 @@ public abstract class RobustBaseSagaOrchestrator {
 
             Timer.Sample timer = Timer.start(meterRegistry);
 
-            return eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "STARTED")
+            return eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), OrderStatus.ORDER_CREATED)
                     .then(compensationManager.executeCompensation(step))
                     .timeout(SAGA_STEP_TIMEOUT)
                     .doOnSuccess(v -> {
@@ -287,9 +288,9 @@ public abstract class RobustBaseSagaOrchestrator {
                         meterRegistry.counter("saga.compensation.error",
                                 "step", step.getName()).increment();
                     })
-                    .then(eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "COMPLETED"))
+                    .then(eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), OrderStatus.ORDER_COMPLETED))
                     .onErrorResume(e -> {
-                        return eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "FAILED: " + e.getMessage())
+                        return eventRepository.insertCompensationLog(step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), OrderStatus.valueOf(OrderStatus.ORDER_FAILED.getValue() + e.getMessage()))
                                 .then(triggerCompensationFailureAlert(step, e))
                                 .then(Mono.empty()); // No propagamos el error para no bloquear
                     })
@@ -331,7 +332,7 @@ public abstract class RobustBaseSagaOrchestrator {
     /**
      * Registra log de compensación en base de datos
      */
-    protected Mono<Void> insertCompensationLog(SagaStep step, String status) {
+    protected Mono<Void> insertCompensationLog(SagaStep step, OrderStatus status) {
         return eventRepository.insertCompensationLog(
                 step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), status);
     }

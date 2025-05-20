@@ -1,3 +1,4 @@
+-- order-service/src/main/docker/mysql-init/orders.sql
 -- Esquema unificado para contenedor Docker (MySQL/MariaDB)
 -- Soporta ambas estrategias: AT LEAST ONCE y AT MOST ONCE
 
@@ -145,12 +146,15 @@ CREATE TABLE IF NOT EXISTS transaction_locks (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     resource_id VARCHAR(100) NOT NULL,
     correlation_id VARCHAR(36) NOT NULL,
+    lock_uuid VARCHAR(36) NOT NULL,
     locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP,
     released BOOLEAN DEFAULT false,
-    UNIQUE KEY unique_resource (resource_id),
+    UNIQUE KEY unique_resource_and_lock (resource_id, lock_uuid),  -- Cambio aquí: ahora la combinación es única
     INDEX idx_correlation_id (correlation_id),
-    INDEX idx_expires_at (expires_at)
+    INDEX idx_expires_at (expires_at),
+    INDEX idx_lock_uuid (lock_uuid),
+    INDEX idx_resource_id (resource_id)  -- Añadido índice separado para resource_id ya que ya no es único
 );
 
 -- Procedimientos almacenados para ambos modos
@@ -179,6 +183,7 @@ CREATE PROCEDURE try_acquire_lock(
     IN p_resource_id VARCHAR(100),
     IN p_correlation_id VARCHAR(36),
     IN p_lock_timeout_seconds INT,
+    IN p_lock_uuid VARCHAR(36),
     OUT p_acquired BOOLEAN
 )
 BEGIN
@@ -187,19 +192,23 @@ BEGIN
     START TRANSACTION;
 
     -- Verificar si el recurso ya está bloqueado
+    -- Nota: ahora verificamos si el recurso específico está bloqueado,
+    -- pero permitimos bloqueos múltiples con diferentes UUIDs
     SELECT COUNT(*) INTO lock_count
     FROM transaction_locks
-    WHERE resource_id = p_resource_id AND (released = false AND expires_at > NOW())
+    WHERE resource_id = p_resource_id AND
+          (released = false AND expires_at > NOW()) AND
+          lock_uuid = p_lock_uuid  -- Verificar solo para este UUID específico
     FOR UPDATE;
 
     IF lock_count = 0 THEN
-        -- El recurso está disponible, adquirimos lock
-        INSERT INTO transaction_locks (resource_id, correlation_id, locked_at, expires_at)
-        VALUES (p_resource_id, p_correlation_id, NOW(), DATE_ADD(NOW(), INTERVAL p_lock_timeout_seconds SECOND));
+        -- El recurso está disponible o ya tiene otros bloqueos con diferentes UUIDs
+        INSERT INTO transaction_locks (resource_id, correlation_id, lock_uuid, locked_at, expires_at)
+        VALUES (p_resource_id, p_correlation_id, p_lock_uuid, NOW(), DATE_ADD(NOW(), INTERVAL p_lock_timeout_seconds SECOND));
 
         SET p_acquired = true;
     ELSE
-        -- El recurso ya está bloqueado
+        -- El recurso ya está bloqueado con este UUID
         SET p_acquired = false;
     END IF;
 
@@ -210,12 +219,15 @@ END //
 DROP PROCEDURE IF EXISTS release_lock //
 CREATE PROCEDURE release_lock(
     IN p_resource_id VARCHAR(100),
-    IN p_correlation_id VARCHAR(36)
+    IN p_correlation_id VARCHAR(36),
+    IN p_lock_uuid VARCHAR(36)
 )
 BEGIN
     UPDATE transaction_locks
     SET released = true
-    WHERE resource_id = p_resource_id AND correlation_id = p_correlation_id;
+    WHERE resource_id = p_resource_id
+    AND correlation_id = p_correlation_id
+    AND lock_uuid = p_lock_uuid;
 END //
 
 -- Actualización del procedimiento insert_outbox para compatibilidad con la versión anterior

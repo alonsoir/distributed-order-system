@@ -1,5 +1,6 @@
 package com.example.order.events;
 
+import com.example.order.domain.OrderStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -21,7 +22,7 @@ public class DefaultOrderEvent implements OrderEvent {
     private String correlationId;
     private String externalReference;
     private Long orderId;
-    private OrderEventType type;
+    private OrderStatus type;
     private String payload;
 
     @Override
@@ -40,7 +41,7 @@ public class DefaultOrderEvent implements OrderEvent {
     }
 
     @Override
-    public OrderEventType getType() {
+    public OrderStatus getType() {
         return type;
     }
 

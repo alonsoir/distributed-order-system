@@ -2,6 +2,7 @@ package com.example.order.repository;
 
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderEvent;
 import reactor.core.publisher.Mono;
 
@@ -54,17 +55,17 @@ public interface EventRepository {
     /**
      * Actualiza el estado de una orden
      */
-    Mono<Order> updateOrderStatus(Long orderId, String status, String correlationId);
+    Mono<Order> updateOrderStatus(Long orderId, OrderStatus status, String correlationId);
 
     /**
      * Inserta un registro en el historial de estados de la orden
      */
-    Mono<Void> insertStatusAuditLog(Long orderId, String status, String correlationId);
+    Mono<Void> insertStatusAuditLog(Long orderId, OrderStatus status, String correlationId);
 
     /**
      * Registra un fallo de compensación
      */
-    Mono<Void> insertCompensationLog(String stepName, Long orderId, String correlationId, String eventId, String status);
+    Mono<Void> insertCompensationLog(String stepName, Long orderId, String correlationId, String eventId, OrderStatus status);
 
     /**
      * Registra un fallo de paso en la saga

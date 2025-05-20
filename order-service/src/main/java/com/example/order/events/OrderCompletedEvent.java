@@ -1,5 +1,6 @@
 package com.example.order.events;
 
+import com.example.order.domain.OrderStatus;
 import lombok.Getter;
 
 @Getter
@@ -17,8 +18,8 @@ public class OrderCompletedEvent implements OrderEvent{
     }
 
     @Override
-    public OrderEventType getType() {
-        return OrderEventType.ORDER_COMPLETED;
+    public OrderStatus getType() {
+        return OrderStatus.ORDER_COMPLETED;
     }
 
     @Override

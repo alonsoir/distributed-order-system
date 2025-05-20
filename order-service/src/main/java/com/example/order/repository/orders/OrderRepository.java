@@ -2,6 +2,7 @@ package com.example.order.repository.orders;
 
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderEvent;
 import com.example.order.exception.*;
 import com.example.order.repository.base.AbstractReactiveRepository;
@@ -163,8 +164,8 @@ public class OrderRepository extends AbstractReactiveRepository {
             Long orderId, String correlationId, String eventId, OrderEvent event, DeliveryMode deliveryMode) {
 
         // Sanitizar entradas
-        String sanitizedCorrelationId = securityUtils.sanitizeInput(correlationId);
-        String sanitizedEventId = securityUtils.sanitizeInput(eventId);
+        String sanitizedCorrelationId = securityUtils.sanitizeStringInput(correlationId);
+        String sanitizedEventId = securityUtils.sanitizeStringInput(eventId);
 
         // Cadena de operaciones dentro de una transacción
         Mono<Void> transactionMono = Mono.defer(() -> {
@@ -210,7 +211,7 @@ public class OrderRepository extends AbstractReactiveRepository {
             @NotNull(message = "status cannot be null")
             @NotBlank(message = "status cannot be empty")
             @Size(max = 64, message = "status must be less than {max} characters")
-            String status,
+            OrderStatus status,
             @NotNull(message = "correlationId cannot be null")
             @NotBlank(message = "correlationId cannot be empty")
             @Size(max = 64, message = "correlationId must be less than {max} characters")
@@ -223,9 +224,9 @@ public class OrderRepository extends AbstractReactiveRepository {
 
         log.info("Updating order {} status to {}", orderId, status);
 
-        String sanitizedStatus = securityUtils.sanitizeInput(status);
-        String sanitizedCorrelationId = securityUtils.sanitizeInput(correlationId);
-
+        String sanitizedStatus = securityUtils.sanitizeStatus(status);
+        String sanitizedCorrelationId = securityUtils.sanitizeStringInput(correlationId);
+        String sanitizedOrderId = securityUtils.sanitizeStringInput(orderId.toString());
         // Ejecutar actualización con transacción
         Mono<Order> updateMono = Mono.defer(() -> {
             // Paso 1: Actualizar estado de la orden
@@ -233,10 +234,10 @@ public class OrderRepository extends AbstractReactiveRepository {
                     .bind("status", sanitizedStatus)
                     .bind("id", orderId)
                     .then()
-                    .doOnSuccess(v -> log.info("Updated order {} status to {}", orderId, sanitizedStatus));
+                    .doOnSuccess(v -> log.info("Updated order {} status to {}", orderId, correlationId));
 
             // Paso 2: Insertar registro en historial de estados
-            Mono<Void> insertHistoryMono = insertStatusAuditLog(orderId, sanitizedStatus, sanitizedCorrelationId);
+            Mono<Void> insertHistoryMono = insertStatusAuditLog(orderId, status, correlationId);
 
             // Ejecutar ambas operaciones y retornar la orden actualizada
             return updateStatusMono
@@ -255,7 +256,7 @@ public class OrderRepository extends AbstractReactiveRepository {
             @NotNull(message = "status cannot be null")
             @NotBlank(message = "status cannot be empty")
             @Size(max = 64, message = "status must be less than {max} characters")
-            String status,
+            OrderStatus status,
             @NotNull(message = "correlationId cannot be null")
             @NotBlank(message = "correlationId cannot be empty")
             @Size(max = 64, message = "correlationId must be less than {max} characters")
@@ -266,14 +267,15 @@ public class OrderRepository extends AbstractReactiveRepository {
         validationUtils.validateStatus(status);
         validationUtils.validateCorrelationId(correlationId);
 
-        String sanitizedStatus = securityUtils.sanitizeInput(status);
-        String sanitizedCorrelationId = securityUtils.sanitizeInput(correlationId);
-
+        String sanitizedStatus = securityUtils.sanitizeStatus(status);
+        String sanitizedCorrelationId = securityUtils.sanitizeStringInput(correlationId);
+        String sanitizedOrderId = securityUtils.sanitizeStringInput(orderId.toString());
         return databaseClient.sql(SQL_INSERT_STATUS_HISTORY)
-                .bind("orderId", orderId)
+                .bind("orderId", sanitizedOrderId)
                 .bind("status", sanitizedStatus)
                 .bind("correlationId", sanitizedCorrelationId)
                 .then()
+                // todo Este mensaje insertStatusAuditLog debería ser más específico, un enumerado en alguna parte del código.
                 .transform(mono -> withTimeoutsAndRetries(mono, "insertStatusAuditLog"))
                 .onErrorResume(e -> {
                     log.warn("Failed to insert status audit log for order {}: {}", orderId, e.getMessage());
