@@ -165,11 +165,11 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 .thenReturn(Mono.just(mockOrder));
 
         // 4. Actualizar estado
-        when(orderRepository.updateOrderStatus(orderId, "completed", correlationId))
+        when(orderRepository.updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId))
                 .thenReturn(Mono.just(mockOrder));
 
         // 5. Insertar log de auditoría
-        when(orderRepository.insertStatusAuditLog(orderId, "completed", correlationId))
+        when(orderRepository.insertStatusAuditLog(orderId, OrderStatus.ORDER_COMPLETED, correlationId))
                 .thenReturn(Mono.empty());
 
         // 6. Guardar historial del evento
@@ -198,12 +198,12 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 .verifyComplete();
 
         // Actualizamos el estado
-        StepVerifier.create(compositeEventRepository.updateOrderStatus(orderId, "completed", correlationId))
+        StepVerifier.create(compositeEventRepository.updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId))
                 .expectNext(mockOrder)
                 .verifyComplete();
 
         // Insertamos log de auditoría
-        StepVerifier.create(compositeEventRepository.insertStatusAuditLog(orderId, "completed", correlationId))
+        StepVerifier.create(compositeEventRepository.insertStatusAuditLog(orderId, OrderStatus.ORDER_COMPLETED, correlationId))
                 .verifyComplete();
 
         // Guardamos el historial del evento
@@ -226,8 +226,8 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 any(OrderEvent.class),
                 eq(DeliveryMode.AT_MOST_ONCE));
         verify(orderRepository).findOrderById(orderId);
-        verify(orderRepository).updateOrderStatus(orderId, "completed", correlationId);
-        verify(orderRepository).insertStatusAuditLog(orderId, "completed", correlationId);
+        verify(orderRepository).updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId);
+        verify(orderRepository).insertStatusAuditLog(orderId, OrderStatus.ORDER_COMPLETED, correlationId);
         verify(eventHistoryRepository).saveEventHistory(
                 eq(eventId),
                 eq(correlationId),
@@ -318,7 +318,7 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 .verifyComplete();
 
         // Y actualizamos el estado a fallido
-        StepVerifier.create(compositeEventRepository.updateOrderStatus(orderId, "failed", correlationId))
+        StepVerifier.create(compositeEventRepository.updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId))
                 .expectNext(failedOrder)
                 .verifyComplete();
 
@@ -329,7 +329,7 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 anyString(),
                 eq("RuntimeException"),
                 eq(deliveryMode));
-        verify(orderRepository).updateOrderStatus(orderId, "failed", correlationId);
+        verify(orderRepository).updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId);
     }
 
     @Test

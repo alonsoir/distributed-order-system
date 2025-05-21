@@ -12,7 +12,11 @@ public class OrderStateTransition {
     private static final Map<OrderStatus, OrderStatus[]> VALID_TRANSITIONS = new EnumMap<>(OrderStatus.class);
 
     static {
-        // Definir transiciones válidas
+        // Definir transiciones válidas. Están todas? yo creo que no.
+        // Todos los estados están definidos en OrderStatus.
+        // HAY QUE DEFINIR cuales son los estados válidos, las transciones válidas y cuales no.
+        // Luego, este mapa debe estar a disposicion del SagaOrchestrator, tanto del AT LEAST ONCE
+        // como del AT MOST ONCE.
         VALID_TRANSITIONS.put(OrderStatus.ORDER_CREATED, new OrderStatus[]{OrderStatus.ORDER_PENDING});
         VALID_TRANSITIONS.put(OrderStatus.ORDER_PENDING, new OrderStatus[]{OrderStatus.STOCK_RESERVED, OrderStatus.ORDER_FAILED});
         VALID_TRANSITIONS.put(OrderStatus.STOCK_RESERVED, new OrderStatus[]{OrderStatus.ORDER_COMPLETED, OrderStatus.ORDER_FAILED});

@@ -14,7 +14,6 @@ public class ValidationUtils {
     private static final int MAX_ERROR_MESSAGE_LENGTH = 1024;
     private static final int MAX_ERROR_TYPE_LENGTH = 128;
     private static final int MAX_ERROR_CATEGORY_LENGTH = 64;
-    private static final int MAX_STATUS_LENGTH = 64;
     private static final int MAX_OPERATION_LENGTH = 32;
     private static final int MAX_OUTCOME_LENGTH = 32;
     private static final int MAX_STEP_NAME_LENGTH = 64;
@@ -22,8 +21,6 @@ public class ValidationUtils {
 
     // Patrones regex para validación
     private static final String ALPHANUMERIC_PATTERN = "^[a-zA-Z0-9\\-_]+$";
-    private static final String UUID_PATTERN =
-            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
     /**
      * Trunca una cadena si excede la longitud máxima
@@ -81,36 +78,6 @@ public class ValidationUtils {
         // No es necesario validar nada más, ya que Java garantiza que solo puede ser uno de los valores del enum
     }
 
-    /*Por definir, esto debería ir en un verdadero repositorio de dominio y eventos, pero por ahora lo dejo aquí.
-    Las tuplas y los eventos deberían estar siempre sincronizados, pero estos evolucionan de forma independiente.
-    * */
-    public void validateStatusTransition(OrderStatus currentStatus, OrderStatus newStatus) {
-        if (currentStatus == null || newStatus == null) {
-            throw new InvalidParameterException("status cannot be null");
-        }
-
-        // Ejemplo de reglas de transición
-        if (currentStatus == OrderStatus.ORDER_FAILED && newStatus != OrderStatus.ORDER_CREATED) {
-            throw new InvalidParameterException("Cannot transition from ORDER_FAILED to " + newStatus);
-        }
-
-        if (currentStatus == OrderStatus.ORDER_COMPLETED && newStatus != OrderStatus.ORDER_CREATED) {
-            throw new InvalidParameterException("Cannot transition from ORDER_COMPLETED to " + newStatus);
-        }
-
-        // Otras reglas de transición según la lógica de negocio
-        if (currentStatus == OrderStatus.ORDER_CREATED && newStatus != OrderStatus.ORDER_PENDING) {
-            throw new InvalidParameterException("From ORDER_CREATED you can only transition to ORDER_PENDING");
-        }
-
-        if (currentStatus == OrderStatus.ORDER_PENDING && newStatus != OrderStatus.STOCK_RESERVED && newStatus != OrderStatus.ORDER_FAILED) {
-            throw new InvalidParameterException("From ORDER_PENDING you can only transition to STOCK_RESERVED or ORDER_FAILED");
-        }
-
-        if (currentStatus == OrderStatus.STOCK_RESERVED && newStatus != OrderStatus.ORDER_COMPLETED && newStatus != OrderStatus.ORDER_FAILED) {
-            throw new InvalidParameterException("From STOCK_RESERVED you can only transition to ORDER_COMPLETED or ORDER_FAILED");
-        }
-    }
 
     public void validateStepName(String stepName) {
         if (stepName == null || stepName.isBlank()) {
@@ -157,14 +124,8 @@ public class ValidationUtils {
         }
     }
 
-    // Getters para constantes de longitud máxima
-    public int getMaxEventIdLength() { return MAX_EVENT_ID_LENGTH; }
-    public int getMaxCorrelationIdLength() { return MAX_CORRELATION_ID_LENGTH; }
     public int getMaxErrorMessageLength() { return MAX_ERROR_MESSAGE_LENGTH; }
     public int getMaxErrorTypeLength() { return MAX_ERROR_TYPE_LENGTH; }
     public int getMaxErrorCategoryLength() { return MAX_ERROR_CATEGORY_LENGTH; }
-    public int getMaxStatusLength() { return MAX_STATUS_LENGTH; }
-    public int getMaxOperationLength() { return MAX_OPERATION_LENGTH; }
-    public int getMaxOutcomeLength() { return MAX_OUTCOME_LENGTH; }
-    public int getMaxStepNameLength() { return MAX_STEP_NAME_LENGTH; }
+
 }

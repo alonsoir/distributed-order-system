@@ -36,11 +36,11 @@ class OrderStatusConsistencyTest {
         String correlationId = "test-corr";
 
         // Configurar respuesta del repositorio para capturar los argumentos
-        ArgumentCaptor<String> statusCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<OrderStatus> statusCaptor = ArgumentCaptor.forClass(OrderStatus.class);
 
         // Mock de findOrderById para retornar una orden con estado PENDING
         when(eventRepository.findOrderById(anyLong()))
-                .thenReturn(Mono.just(new Order(orderId, OrderStatus.PENDING, correlationId)));
+                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)));
 
         // Mock de updateOrderStatus para capturar el argumento de estado
         when(eventRepository.updateOrderStatus(anyLong(), statusCaptor.capture(), anyString()))
@@ -55,12 +55,12 @@ class OrderStatusConsistencyTest {
 
         // Verificar el flujo
         StepVerifier.create(result)
-                .expectNextMatches(order -> order.status() == OrderStatus.COMPLETED)
+                .expectNextMatches(order -> order.status() == OrderStatus.ORDER_COMPLETED)
                 .verifyComplete();
 
         // Verificar que el estado pasado como string corresponde al enum correcto
-        String capturedStatus = statusCaptor.getValue();
-        assertEquals(OrderStatus.COMPLETED.getValue(), capturedStatus,
+        OrderStatus capturedStatus = statusCaptor.getValue();
+        assertEquals(OrderStatus.ORDER_COMPLETED, capturedStatus,
                 "El estado string debe corresponder al valor del enum OrderStatus.COMPLETED");
     }
 }

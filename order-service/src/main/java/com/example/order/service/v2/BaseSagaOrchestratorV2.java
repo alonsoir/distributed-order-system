@@ -69,7 +69,7 @@ public abstract class BaseSagaOrchestratorV2 {
             String externalReference) {
         return SagaStep.builder()
                 .name("reserveStock")
-                .topic(EventTopics.STOCK_RESERVED.getTopic())
+                .topic(EventTopics.STOCK_RESERVED.getTopicName())
                 .action(() -> inventoryService.reserveStock(orderId, quantity))
                 .compensation(() -> inventoryService.releaseStock(orderId, quantity))
                 .successEvent(eventSuccessId -> new StockReservedEvent(orderId, correlationId, eventId, externalReference, quantity))
@@ -289,7 +289,7 @@ public abstract class BaseSagaOrchestratorV2 {
                             SagaStepType.FAILED_EVENT.name(),
                             DeliveryMode.AT_LEAST_ONCE)
                     // Continuar con la publicación normal
-                    .then(publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopic()).then());
+                    .then(publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopicName()).then());
         });
     }
 

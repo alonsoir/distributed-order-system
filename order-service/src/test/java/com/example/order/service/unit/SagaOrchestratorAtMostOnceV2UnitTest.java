@@ -99,14 +99,22 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         // Mock respuesta de EventRepository
 
         when(eventRepository.isEventProcessed(anyString())).thenReturn(Mono.just(false));
-        when(eventRepository.findOrderById(anyLong())).thenReturn(Mono.just(new Order(orderId, OrderStatus.PENDING, correlationId)));
-        when(eventRepository.saveOrderData(anyLong(), anyString(), anyString(), any(OrderEvent.class))).thenReturn(Mono.empty());
-        when(eventRepository.updateOrderStatus(anyLong(), anyString(), anyString())).thenReturn(Mono.just(new Order(orderId, OrderStatus.PENDING, correlationId)));
-        when(eventRepository.insertStatusAuditLog(anyLong(), anyString(), anyString())).thenReturn(Mono.empty());
-        when(eventRepository.saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
-        when(eventRepository.recordSagaFailure(anyLong(), anyString(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
-        when(eventRepository.recordStepFailure(anyString(), anyLong(), anyString(), anyString(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
-        when(eventRepository.insertCompensationLog(anyString(), anyLong(), anyString(), anyString(), anyString())).thenReturn(Mono.empty());
+        when(eventRepository.findOrderById(anyLong())).thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING,
+                correlationId)));
+        when(eventRepository.saveOrderData(anyLong(), anyString(), anyString(), any(OrderEvent.class))).
+                thenReturn(Mono.empty());
+        when(eventRepository.updateOrderStatus(anyLong(), OrderStatus.valueOf(anyString()), anyString())).
+                thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)));
+        when(eventRepository.insertStatusAuditLog(anyLong(), OrderStatus.valueOf(anyString()), anyString())).
+                thenReturn(Mono.empty());
+        when(eventRepository.saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString())).
+                thenReturn(Mono.empty());
+        when(eventRepository.recordSagaFailure(anyLong(), anyString(), anyString(), anyString(), anyString())).
+                thenReturn(Mono.empty());
+        when(eventRepository.recordStepFailure(anyString(), anyLong(), anyString(), anyString(), anyString(),
+                anyString(), anyString())).thenReturn(Mono.empty());
+        when(eventRepository.insertCompensationLog(anyString(), anyLong(), anyString(), anyString(),
+                OrderStatus.valueOf(anyString()))).thenReturn(Mono.empty());
 
         // Crear el sistema bajo prueba
         sagaOrchestrator = new SagaOrchestratorAtMostOnceImplV2(
@@ -138,8 +146,8 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         // Verificar que se publicó el evento correcto
         verify(eventPublisher).publishEvent(
                 eventCaptor.capture(),
-                eq("createOrder"),
-                eq(EventTopics.ORDER_CREATED.getTopic()));
+                eq("order-created"),
+                eq(EventTopics.ORDER_CREATED.getTopicName()));
 
         OrderEvent capturedEvent = eventCaptor.getValue();
         assertEquals(OrderCreatedEvent.class, capturedEvent.getClass());
@@ -185,15 +193,15 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
     @Test
     void testExecuteOrderSaga_Success() {
         // Mock para que updateOrderStatus devuelva una orden completada
-        when(eventRepository.updateOrderStatus(anyLong(), eq("completed"), anyString()))
-                .thenReturn(Mono.just(new Order(orderId, "completed", correlationId)));
+        when(eventRepository.updateOrderStatus(anyLong(), eq(OrderStatus.ORDER_COMPLETED), anyString()))
+                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_COMPLETED, correlationId)));
 
         // Act & Assert
         StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
                 .assertNext(order -> {
                     assertNotNull(order);
                     assertEquals(orderId, order.id());
-                    assertEquals("completed", order.status());
+                    assertEquals(OrderStatus.ORDER_COMPLETED, order.status());
                     assertEquals(correlationId, order.correlationId());
                 })
                 .verifyComplete();
@@ -204,7 +212,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         verify(idGenerator).generateEventId();
 
         // Verificar interacción con EventRepository
-        verify(eventRepository).updateOrderStatus(anyLong(), eq("completed"), anyString());
+        verify(eventRepository).updateOrderStatus(anyLong(), eq(OrderStatus.ORDER_COMPLETED), anyString());
         verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
         verify(eventRepository).saveOrderData(eq(orderId), eq(correlationId), eq(eventId), any(OrderEvent.class));
     }
@@ -227,8 +235,8 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         // Verificar que se publicó el evento de fallo
         verify(eventPublisher).publishEvent(
                 eq(failedEvent),
-                eq("failedEvent"),
-                eq(EventTopics.ORDER_FAILED.getTopic()));
+                eq("order-failed"),
+                eq(EventTopics.ORDER_FAILED.getTopicName()));
 
         // Verificar interacción con EventRepository
         verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
@@ -269,8 +277,8 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         // Verificar que se publicó el evento de fallo
         verify(eventPublisher).publishEvent(
                 any(OrderFailedEvent.class),
-                eq("failedEvent"),
-                eq(EventTopics.ORDER_FAILED.getTopic()));
+                eq("order-failed"),
+                eq(EventTopics.ORDER_FAILED.getTopicName()));
 
         // Verificar interacción con EventRepository
         verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
@@ -286,7 +294,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .assertNext(order -> {
                     assertNotNull(order);
                     assertEquals(orderId, order.id());
-                    assertEquals(OrderStatus.PENDING, order.status());
+                    assertEquals(OrderStatus.ORDER_PENDING, order.status());
                     assertEquals(correlationId, order.correlationId());
                 })
                 .verifyComplete();
@@ -329,7 +337,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .assertNext(order -> {
                     assertNotNull(order);
                     assertEquals(orderId, order.id());
-                    assertEquals(OrderStatus.PENDING, order.status());
+                    assertEquals(OrderStatus.ORDER_PENDING, order.status());
                     assertEquals(correlationId, order.correlationId());
                 })
                 .verifyComplete();
@@ -386,7 +394,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 eq(orderId),
                 eq(correlationId),
                 eq(eventId),
-                anyString());
+                OrderStatus.valueOf(anyString()));
     }
 
     @Test
@@ -397,21 +405,21 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .thenReturn(Mono.error(expectedError));
 
         // Mock para que updateOrderStatus con status "failed" funcione
-        when(eventRepository.updateOrderStatus(anyLong(), eq("failed"), anyString()))
-                .thenReturn(Mono.just(new Order(orderId, "failed", correlationId)));
+        when(eventRepository.updateOrderStatus(anyLong(), OrderStatus.valueOf(eq("ORDER_FAILED")), anyString()))
+                .thenReturn(Mono.just(new Order(orderId, "ORDER_FAILED", correlationId)));
 
         // Act & Assert
         StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
                 .assertNext(order -> {
                     assertNotNull(order);
                     assertEquals(orderId, order.id());
-                    assertEquals("failed", order.status());
+                    assertEquals("ORDER_FAILED", order.status().getValue());
                     assertEquals(correlationId, order.correlationId());
                 })
                 .verifyComplete();
 
         // Verificar que se actualizó el estado a fallido
-        verify(eventRepository).updateOrderStatus(eq(orderId), eq("failed"), eq(correlationId));
+        verify(eventRepository).updateOrderStatus(eq(orderId), OrderStatus.valueOf(eq("ORDER_FAILED")), eq(correlationId));
 
         // Verificar que se registró el fallo
         verify(eventRepository).recordSagaFailure(
@@ -446,10 +454,10 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
     @Test
     void testExecuteOrderSaga_PendingOrderNotProceedingToNextStep() {
         // Simular un estado de orden diferente a "pending"
-        Order nonPendingOrder = new Order(orderId, OrderStatus.COMPLETED, correlationId);
+        Order nonPendingOrder = new Order(orderId, OrderStatus.ORDER_COMPLETED, correlationId);
 
         // Mock para que updateOrderStatus devuelva una orden con estado no "pending"
-        when(eventRepository.updateOrderStatus(anyLong(), anyString(), anyString()))
+        when(eventRepository.updateOrderStatus(anyLong(), OrderStatus.valueOf(anyString()), anyString()))
                 .thenReturn(Mono.just(nonPendingOrder));
 
         // Mock para que findExistingOrder también devuelva una orden con estado no "pending"
@@ -461,7 +469,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .assertNext(order -> {
                     assertNotNull(order);
                     assertEquals(orderId, order.id());
-                    assertEquals(OrderStatus.COMPLETED, order.status());
+                    assertEquals(OrderStatus.ORDER_COMPLETED, order.status());
                     assertEquals(correlationId, order.correlationId());
                 })
                 .verifyComplete();

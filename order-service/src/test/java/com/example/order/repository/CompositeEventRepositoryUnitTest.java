@@ -2,6 +2,7 @@ package com.example.order.repository;
 
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderEvent;
 import com.example.order.repository.events.EventHistoryRepository;
 import com.example.order.repository.events.ProcessedEventRepository;
@@ -29,7 +30,7 @@ import static org.mockito.Mockito.*;
  * delega correctamente a los repositorios subyacentes.
  */
 @ExtendWith(MockitoExtension.class)
-public class CompositeEventRepositoryUnitTest {
+class CompositeEventRepositoryUnitTest {
 
     @Mock
     private ProcessedEventRepository processedEventRepository;
@@ -54,7 +55,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Validación: no debe permitir eventId nulo o vacío")
-    public void testValidationForNullOrEmptyEventId() {
+     void testValidationForNullOrEmptyEventId() {
         // Caso 1: eventId nulo - debería fallar con ConstraintViolationException
         StepVerifier.create(compositeEventRepository.isEventProcessed(null))
                 .expectError(ConstraintViolationException.class)
@@ -72,7 +73,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Validación: no debe permitir DeliveryMode nulo")
-    public void testValidationForNullDeliveryMode() {
+    void testValidationForNullDeliveryMode() {
         // Validación de @NotNull en DeliveryMode
         StepVerifier.create(compositeEventRepository.isEventProcessed("event-id", null))
                 .expectError(ConstraintViolationException.class)
@@ -84,7 +85,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente la verificación de eventos procesados")
-    public void testDelegatesEventProcessedCheck() {
+     void testDelegatesEventProcessedCheck() {
         // Configurar comportamiento normal
         when(processedEventRepository.isEventProcessed("test-event"))
                 .thenReturn(Mono.just(true));
@@ -100,7 +101,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente la verificación de eventos con modo de entrega")
-    public void testDelegatesEventProcessedCheckWithDeliveryMode() {
+     void testDelegatesEventProcessedCheckWithDeliveryMode() {
         // Configurar comportamiento normal
         when(processedEventRepository.isEventProcessed("test-event", DeliveryMode.AT_LEAST_ONCE))
                 .thenReturn(Mono.just(true));
@@ -116,7 +117,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente el marcar eventos como procesados")
-    public void testDelegatesMarkEventAsProcessed() {
+     void testDelegatesMarkEventAsProcessed() {
         // Configurar comportamiento normal
         when(processedEventRepository.markEventAsProcessed("test-event"))
                 .thenReturn(Mono.empty());
@@ -131,7 +132,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente marcar eventos con modo de entrega")
-    public void testDelegatesMarkEventAsProcessedWithDeliveryMode() {
+     void testDelegatesMarkEventAsProcessedWithDeliveryMode() {
         // Configurar comportamiento normal
         when(processedEventRepository.markEventAsProcessed("test-event", DeliveryMode.AT_MOST_ONCE))
                 .thenReturn(Mono.empty());
@@ -146,7 +147,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente verificar y marcar eventos como procesados")
-    public void testDelegatesCheckAndMarkEventAsProcessed() {
+     void testDelegatesCheckAndMarkEventAsProcessed() {
         // Configurar comportamiento normal
         when(processedEventRepository.checkAndMarkEventAsProcessed("test-event", DeliveryMode.AT_LEAST_ONCE))
                 .thenReturn(Mono.just(true));
@@ -162,7 +163,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente la búsqueda de órdenes por ID")
-    public void testDelegatesFindOrderById() {
+     void testDelegatesFindOrderById() {
         // Crear orden simulada para el test
         Order mockOrder = new Order();
         mockOrder.setId(123L);
@@ -182,7 +183,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente guardar datos de orden")
-    public void testDelegatesSaveOrderData() {
+     void testDelegatesSaveOrderData() {
         // Configurar mock
         OrderEvent mockEvent = mock(OrderEvent.class);
         when(orderRepository.saveOrderData(eq(123L), eq("correlation-id"), eq("event-id"), same(mockEvent)))
@@ -198,7 +199,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente guardar datos de orden con modo de entrega")
-    public void testDelegatesSaveOrderDataWithDeliveryMode() {
+     void testDelegatesSaveOrderDataWithDeliveryMode() {
         // Configurar mock
         OrderEvent mockEvent = mock(OrderEvent.class);
         when(orderRepository.saveOrderData(eq(123L), eq("correlation-id"), eq("event-id"), same(mockEvent), eq(DeliveryMode.AT_MOST_ONCE)))
@@ -214,58 +215,66 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente actualizar estado de orden")
-    public void testDelegatesUpdateOrderStatus() {
+     void testDelegatesUpdateOrderStatus() {
         // Crear orden simulada para el test
         Order mockOrder = new Order();
         mockOrder.setId(123L);
-        mockOrder.setStatus("COMPLETED");
+        mockOrder.setStatus(OrderStatus.ORDER_COMPLETED);
 
         // Configurar comportamiento
-        when(orderRepository.updateOrderStatus(123L, "COMPLETED", "correlation-id"))
+        when(orderRepository.updateOrderStatus(123L, OrderStatus.ORDER_COMPLETED, "correlation-id"))
                 .thenReturn(Mono.just(mockOrder));
 
         // Ejecutar y verificar
-        StepVerifier.create(compositeEventRepository.updateOrderStatus(123L, "COMPLETED", "correlation-id"))
+        StepVerifier.create(compositeEventRepository.updateOrderStatus(123L, OrderStatus.ORDER_COMPLETED, "correlation-id"))
                 .expectNext(mockOrder)
                 .verifyComplete();
 
         // Verificar delegación correcta
-        verify(orderRepository).updateOrderStatus(123L, "COMPLETED", "correlation-id");
+        verify(orderRepository).updateOrderStatus(123L, OrderStatus.ORDER_COMPLETED, "correlation-id");
     }
 
     @Test
     @DisplayName("Debe delegar correctamente insertar logs de auditoría de estado")
-    public void testDelegatesInsertStatusAuditLog() {
+     void testDelegatesInsertStatusAuditLog() {
         // Configurar comportamiento
-        when(orderRepository.insertStatusAuditLog(123L, "COMPLETED", "correlation-id"))
+        when(orderRepository.insertStatusAuditLog(123L, OrderStatus.ORDER_COMPLETED, "correlation-id"))
                 .thenReturn(Mono.empty());
 
         // Ejecutar y verificar
-        StepVerifier.create(compositeEventRepository.insertStatusAuditLog(123L, "COMPLETED", "correlation-id"))
+        StepVerifier.create(compositeEventRepository.insertStatusAuditLog(123L, OrderStatus.ORDER_COMPLETED, "correlation-id"))
                 .verifyComplete();
 
         // Verificar delegación correcta
-        verify(orderRepository).insertStatusAuditLog(123L, "COMPLETED", "correlation-id");
+        verify(orderRepository).insertStatusAuditLog(123L, OrderStatus.ORDER_COMPLETED, "correlation-id");
     }
 
     @Test
     @DisplayName("Debe delegar correctamente insertar logs de compensación")
-    public void testDelegatesInsertCompensationLog() {
+     void testDelegatesInsertCompensationLog() {
         // Configurar comportamiento
-        when(sagaFailureRepository.insertCompensationLog("PAYMENT", 123L, "correlation-id", "event-id", "COMPENSATED"))
+        when(sagaFailureRepository.insertCompensationLog("PAYMENT", 123L, "correlation-id",
+                "event-id",
+                OrderStatus.ORDER_COMPENSATED))
                 .thenReturn(Mono.empty());
 
         // Ejecutar y verificar
-        StepVerifier.create(compositeEventRepository.insertCompensationLog("PAYMENT", 123L, "correlation-id", "event-id", "COMPENSATED"))
+        StepVerifier.create(compositeEventRepository.insertCompensationLog("PAYMENT", 123L,
+                        "correlation-id",
+                        "event-id",
+                        OrderStatus.ORDER_COMPENSATED))
                 .verifyComplete();
 
         // Verificar delegación correcta
-        verify(sagaFailureRepository).insertCompensationLog("PAYMENT", 123L, "correlation-id", "event-id", "COMPENSATED");
+        verify(sagaFailureRepository).insertCompensationLog("PAYMENT", 123L,
+                "correlation-id",
+                "event-id",
+                OrderStatus.ORDER_COMPENSATED);
     }
 
     @Test
     @DisplayName("Debe delegar correctamente registrar fallos de paso")
-    public void testDelegatesRecordStepFailure() {
+     void testDelegatesRecordStepFailure() {
         // Configurar comportamiento
         when(sagaFailureRepository.recordStepFailure(
                 "PAYMENT", 123L, "correlation-id", "event-id",
@@ -286,7 +295,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente registrar fallos de saga")
-    public void testDelegatesRecordSagaFailure() {
+     void testDelegatesRecordSagaFailure() {
         // Configurar comportamiento
         when(sagaFailureRepository.recordSagaFailure(
                 123L, "correlation-id", "Saga failed", "SAGA_ERROR", "SYSTEM_ERROR"))
@@ -304,7 +313,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente registrar fallos de saga con modo de entrega")
-    public void testDelegatesRecordSagaFailureWithDeliveryMode() {
+     void testDelegatesRecordSagaFailureWithDeliveryMode() {
         // Configurar comportamiento
         when(sagaFailureRepository.recordSagaFailure(
                 123L, "correlation-id", "Saga failed", "SAGA_ERROR", DeliveryMode.AT_LEAST_ONCE))
@@ -322,7 +331,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente guardar historial de eventos")
-    public void testDelegatesSaveEventHistory() {
+     void testDelegatesSaveEventHistory() {
         // Configurar comportamiento
         when(eventHistoryRepository.saveEventHistory(
                 "event-id", "correlation-id", 123L, "ORDER_CREATED", "CREATE", "SUCCESS"))
@@ -340,7 +349,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente guardar historial de eventos con modo de entrega")
-    public void testDelegatesSaveEventHistoryWithDeliveryMode() {
+     void testDelegatesSaveEventHistoryWithDeliveryMode() {
         // Configurar comportamiento
         when(eventHistoryRepository.saveEventHistory(
                 "event-id", "correlation-id", 123L, "ORDER_CREATED", "CREATE", "SUCCESS", DeliveryMode.AT_MOST_ONCE))
@@ -358,7 +367,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe delegar correctamente las operaciones de bloqueo de transacción")
-    public void testDelegatesTransactionLockOperations() {
+     void testDelegatesTransactionLockOperations() {
         // Configurar comportamiento para adquirir
         when(transactionLockRepository.acquireTransactionLock("resource-id", "corr-id", 10))
                 .thenReturn(Mono.just(true));
@@ -383,7 +392,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe rechazar IDs de recurso inválidos en operaciones de bloqueo")
-    public void testValidatesResourceId() {
+     void testValidatesResourceId() {
         // Caso 1: resourceId nulo
         StepVerifier.create(compositeEventRepository.acquireTransactionLock(null, "corr-id", 10))
                 .expectError(IllegalArgumentException.class)
@@ -401,7 +410,7 @@ public class CompositeEventRepositoryUnitTest {
 
     @Test
     @DisplayName("Debe rechazar IDs de correlación inválidos en operaciones de bloqueo")
-    public void testValidatesCorrelationId() {
+     void testValidatesCorrelationId() {
         // Caso 1: correlationId nulo
         StepVerifier.create(compositeEventRepository.acquireTransactionLock("resource-id", null, 10))
                 .expectError(IllegalArgumentException.class)

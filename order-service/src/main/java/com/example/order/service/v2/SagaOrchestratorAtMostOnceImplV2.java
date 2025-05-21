@@ -256,7 +256,7 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                                                         .doOnSuccess(v -> log.info("Created order object for {}", orderId))
                                         )
                                         // Publicar evento después de la transacción
-                                        .flatMap(order -> publishEvent(event, "createOrder", EventTopics.ORDER_CREATED.getTopic())
+                                        .flatMap(order -> publishEvent(event, "createOrder", EventTopics.ORDER_CREATED.getTopicName())
                                                 .thenReturn(order))
                                         .doOnSuccess(v -> {
                                             log.info("Order creation completed for {}", orderId);
@@ -358,7 +358,7 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
             return Mono.error(new IllegalArgumentException("Failed event cannot be null"));
         }
 
-        return publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopic())
+        return publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopicName())
                 .doOnSuccess(v -> log.info("Published failure event for order {}", event.getOrderId()))
                 .doOnError(e -> log.error("Failed to publish failure event: {}", e.getMessage(), e))
                 .onErrorResume(e -> {

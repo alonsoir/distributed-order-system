@@ -147,7 +147,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
 
         return SagaStep.builder()
                 .name("reserveStock")
-                .topic(EventTopics.STOCK_RESERVED.getTopic())
+                .topic(EventTopics.STOCK_RESERVED.getTopicName())
                 .stepType(SagaStepType.RESERVE_STOCK)
                 .action(() -> inventoryService.reserveStock(orderId, quantity)
                         .timeout(SAGA_STEP_TIMEOUT)
@@ -220,7 +220,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
                         }
 
                         // La transición es válida, procedemos con la actualización
-                        return eventRepository.updateOrderStatus(orderId, newStatus.getValue(), correlationId)
+                        return eventRepository.updateOrderStatus(orderId, newStatus, correlationId)
                                 .doOnSuccess(order -> {
                                     log.info("Updated order {} status to {}", orderId, newStatus);
                                     timer.stop(meterRegistry.timer("saga.order.status.update", Tags.of(tags)));
@@ -255,7 +255,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
     /**
      * Insertar registro de auditoría para actualización de estado
      */
-    protected Mono<Void> insertUpdateStatusAuditLog(Long orderId, String status, String correlationId) {
+    protected Mono<Void> insertUpdateStatusAuditLog(Long orderId, OrderStatus status, String correlationId) {
         return eventRepository.insertStatusAuditLog(orderId, status, correlationId);
     }
 
@@ -315,7 +315,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
 
             // Primero, registramos el inicio de la compensación
             Mono<Void> startLog = eventRepository.insertCompensationLog(
-                    step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), "STARTED");
+                    step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), OrderStatus.ORDER_CREATED);
 
             // Luego ejecutamos la compensación con verificación de null
             Mono<Void> executeComp = compensationManager.executeCompensation(step);
@@ -343,7 +343,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
             Mono<Void> completionLog = Mono.defer(() ->
                     eventRepository.insertCompensationLog(
                             step.getName(), step.getOrderId(), step.getCorrelationId(),
-                            step.getEventId(), "COMPLETED")
+                            step.getEventId(), OrderStatus.ORDER_COMPLETED)
             );
 
             // Encadenamos las operaciones, con manejo de errores
@@ -354,7 +354,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
                         // En caso de error, registramos el fallo y alertamos
                         return eventRepository.insertCompensationLog(
                                         step.getName(), step.getOrderId(), step.getCorrelationId(),
-                                        step.getEventId(), "FAILED: " + e.getMessage())
+                                        step.getEventId(), OrderStatus.valueOf(OrderStatus.ORDER_FAILED + e.getMessage()))
                                 .then(triggerCompensationFailureAlert(step, e));
                     })
                     .subscribeOn(Schedulers.boundedElastic());
@@ -399,7 +399,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
     /**
      * Registra log de compensación en base de datos
      */
-    protected Mono<Void> insertCompensationLog(SagaStep step, String status) {
+    protected Mono<Void> insertCompensationLog(SagaStep step, OrderStatus status) {
         return eventRepository.insertCompensationLog(
                 step.getName(), step.getOrderId(), step.getCorrelationId(), step.getEventId(), status);
     }
@@ -594,7 +594,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
      * Publica un evento de fallo
      */
     protected Mono<Void> publishFailedEvent(OrderFailedEvent event) {
-        return publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopic())
+        return publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopicName())
                 .onErrorResume(e -> {
                     log.error("Failed to publish failure event: {}", e.getMessage(), e);
                     // Métrica crítica - fallo al publicar evento de fallo

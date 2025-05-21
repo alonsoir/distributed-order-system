@@ -3,6 +3,7 @@ package com.example.order.service.unit;
 import com.example.order.domain.Order;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.service.*;
+import com.example.order.service.v2.SagaOrchestratorAtLeastOnceImplV2;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.Counter;
@@ -59,7 +60,7 @@ class CircuitBreakerAtLeastOnceUnitTest {
     private TransactionalOperator transactionalOperator;
     @Mock
     //atLeastOnce
-    private SagaOrchestratorAtLeastOnceImpl sagaOrchestrator;
+    private SagaOrchestratorAtLeastOnceImplV2 sagaOrchestrator;
     @Mock
     private CircuitBreaker circuitBreaker;
     @Mock

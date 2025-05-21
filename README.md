@@ -30,7 +30,37 @@ La arquitectura enfatiza la resiliencia ante fallos físicos mediante:
     - `CompensationManager`: Handles compensating transactions for failed steps / Gestiona transacciones de compensación
   para pasos fallidos
     - `EventPublisher`: Manages event publication with fallback mechanisms 
-  / Administra la publicación de eventos con mecanismos de respaldo
+  / Administra la publicación de eventos con mecanismos de respaldo.
+
+## Transicion de estados entre pasos que puedan ocurrir en el flujo de trabajo.
+
+Muy relacionado con el flujo de trabajo, pero no es el flujo de trabajo en sí.
+
+2. Flujo Normal:
+   ORDER_CREATED → ORDER_VALIDATED → PAYMENT_PENDING → PAYMENT_PROCESSING → PAYMENT_CONFIRMED →
+   STOCK_CHECKING → STOCK_RESERVED → ORDER_PROCESSING → ORDER_PREPARED →
+   SHIPPING_PENDING → SHIPPING_ASSIGNED → SHIPPING_IN_PROGRESS → DELIVERED_TO_COURIER →
+   OUT_FOR_DELIVERY → DELIVERED → PENDING_CONFIRMATION → RECEIVED_CONFIRMED → ORDER_COMPLETED
+
+2. Flujo de Fallos de Pago:
+   PAYMENT_PENDING → PAYMENT_PROCESSING → PAYMENT_DECLINED →
+   [PAYMENT_PENDING (reintento) o ORDER_FAILED/ORDER_CANCELED]
+
+3. Flujo de Fallos de Inventario:
+   STOCK_CHECKING → STOCK_UNAVAILABLE →
+   [STOCK_CHECKING (reintento) o ORDER_FAILED/ORDER_CANCELED]
+
+4. Flujo de Excepciones Técnicas:
+   [Cualquier Estado] → TECHNICAL_EXCEPTION → WAITING_RETRY → [Estado Original] o
+   TECHNICAL_EXCEPTION → MANUAL_REVIEW → [Decisión Manual]
+
+5. Flujo de Devolución:
+   ORDER_COMPLETED → RETURN_REQUESTED → RETURN_APPROVED → RETURN_IN_TRANSIT →
+   RETURN_RECEIVED → REFUND_PROCESSING → REFUND_COMPLETED
+
+6. Flujo de Fallos de Entrega:
+   OUT_FOR_DELIVERY → DELIVERY_ATTEMPTED → [OUT_FOR_DELIVERY (reintento) o DELIVERY_EXCEPTION] →
+   [ORDER_FAILED o MANUAL_REVIEW]
 
 ## Key Features / Características Principales
 

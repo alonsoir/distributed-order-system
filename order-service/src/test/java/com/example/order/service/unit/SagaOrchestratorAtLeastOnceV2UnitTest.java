@@ -3,6 +3,7 @@ package com.example.order.service.unit;
 import com.example.order.config.CircuitBreakerCategory;
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
@@ -116,9 +117,9 @@ class SagaOrchestratorAtLeastOnceV2UnitTest {
                 .thenReturn(Mono.empty());
         when(eventRepository.saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
-        when(eventRepository.updateOrderStatus(anyLong(), anyString(), anyString()))
+        when(eventRepository.updateOrderStatus(anyLong(), OrderStatus.valueOf(anyString()), anyString()))
                 .thenReturn(Mono.just(new Order(ORDER_ID, "completed", CORRELATION_ID)));
-        when(eventRepository.insertStatusAuditLog(anyLong(), anyString(), anyString()))
+        when(eventRepository.insertStatusAuditLog(anyLong(), OrderStatus.valueOf(anyString()), anyString()))
                 .thenReturn(Mono.empty());
         when(eventRepository.recordStepFailure(anyString(), anyLong(), anyString(), anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(Mono.empty());
@@ -126,7 +127,7 @@ class SagaOrchestratorAtLeastOnceV2UnitTest {
                 .thenReturn(Mono.empty());
         when(eventRepository.recordSagaFailure(anyLong(), anyString(), anyString(), anyString(), any(DeliveryMode.class)))
                 .thenReturn(Mono.empty());
-        when(eventRepository.insertCompensationLog(anyString(), anyLong(), anyString(), anyString(), anyString()))
+        when(eventRepository.insertCompensationLog(anyString(), anyLong(), anyString(), anyString(), OrderStatus.valueOf(anyString())))
                 .thenReturn(Mono.empty());
 
         // Mock para TransactionalOperator
@@ -224,7 +225,7 @@ class SagaOrchestratorAtLeastOnceV2UnitTest {
                 .verifyComplete();
 
         // Verificar que se publicó un evento de fallo - este tipo de verificación es razonable
-        verify(eventPublisher).publishEvent(any(OrderFailedEvent.class), eq("failedEvent"), eq(EventTopics.ORDER_FAILED.getTopic()));
+        verify(eventPublisher).publishEvent(any(OrderFailedEvent.class), eq("ORDER_FAILED"), eq(EventTopics.ORDER_FAILED.getTopicName()));
     }
 
     @Test
@@ -258,13 +259,13 @@ class SagaOrchestratorAtLeastOnceV2UnitTest {
         StepVerifier.create(result)
                 .expectNextMatches(order ->
                         order.id().equals(ORDER_ID) &&
-                                order.status().equals("completed") &&
+                                order.status().equals(OrderStatus.ORDER_COMPLETED) &&
                                 order.correlationId().equals(CORRELATION_ID))
                 .verifyComplete();
 
         // Verificar interacciones
         verify(inventoryService).reserveStock(eq(ORDER_ID), eq(QUANTITY));
-        verify(eventRepository).updateOrderStatus(eq(ORDER_ID), eq("completed"), eq(CORRELATION_ID));
+        verify(eventRepository).updateOrderStatus(eq(ORDER_ID), eq(OrderStatus.ORDER_COMPLETED), eq(CORRELATION_ID));
     }
 
     @Test
@@ -282,12 +283,12 @@ class SagaOrchestratorAtLeastOnceV2UnitTest {
         StepVerifier.create(result)
                 .expectNextMatches(order ->
                         order.id().equals(ORDER_ID) &&
-                                order.status().equals("failed") &&
+                                order.status().equals(OrderStatus.ORDER_FAILED) &&
                                 order.correlationId().equals(CORRELATION_ID))
                 .verifyComplete();
 
         // Verificar interacciones
-        verify(eventRepository).updateOrderStatus(eq(ORDER_ID), eq("failed"), eq(CORRELATION_ID));
+        verify(eventRepository).updateOrderStatus(eq(ORDER_ID), eq(OrderStatus.ORDER_FAILED), eq(CORRELATION_ID));
         verify(eventRepository, atLeastOnce()).recordSagaFailure(
                 anyLong(), anyString(), anyString(), anyString(), anyString());
     }
@@ -455,19 +456,19 @@ class SagaOrchestratorAtLeastOnceV2UnitTest {
     @DisplayName("Verificar inserción de auditoría de estado")
     void testStatusAuditLog() {
         // Given
-        when(eventRepository.insertStatusAuditLog(ORDER_ID, "completed", CORRELATION_ID))
+        when(eventRepository.insertStatusAuditLog(ORDER_ID, OrderStatus.ORDER_COMPLETED, CORRELATION_ID))
                 .thenReturn(Mono.empty());
 
         // When - mejorar insertUpdateStatusAuditLog sería necesario para exponer este método
         // Este es un test simulado para la inserción de auditoría
         Mono<Void> result = Mono.defer(() ->
-                eventRepository.insertStatusAuditLog(ORDER_ID, "completed", CORRELATION_ID));
+                eventRepository.insertStatusAuditLog(ORDER_ID, OrderStatus.ORDER_COMPLETED, CORRELATION_ID));
 
         // Then
         StepVerifier.create(result)
                 .verifyComplete();
 
         // Verificar llamada a inserción de log de auditoría
-        verify(eventRepository).insertStatusAuditLog(ORDER_ID, "completed", CORRELATION_ID);
+        verify(eventRepository).insertStatusAuditLog(ORDER_ID, OrderStatus.ORDER_COMPLETED, CORRELATION_ID);
     }
 }

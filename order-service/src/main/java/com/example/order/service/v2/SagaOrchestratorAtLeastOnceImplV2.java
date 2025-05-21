@@ -2,6 +2,7 @@ package com.example.order.service.v2;
 
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
@@ -85,11 +86,11 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
                             })
                             .flatMap(event -> {
                                 log.info("Stock reserved, updating order status to completed");
-                                return updateOrderStatus(orderId, "completed", correlationId);
+                                return updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId);
                             })
                             .onErrorResume(e -> {
                                 log.error("Order saga failed: {}", e.getMessage(), e);
-                                return updateOrderStatus(orderId, "failed", correlationId);
+                                return updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId);
                             });
                 },
                 meterRegistry,
@@ -209,7 +210,7 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
                     OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity);
 
                     Mono<Order> orderMono = insertOrderData(orderId, correlationId, eventId, event)
-                            .then(publishEvent(event, "createOrder", EventTopics.ORDER_CREATED.getTopic()))
+                            .then(publishEvent(event, "createOrder", EventTopics.ORDER_CREATED.getTopicName()))
                             .then(Mono.just(new Order(orderId, "pending", correlationId)))
                             .doOnSuccess(v -> log.info("Created order object for {}", orderId))
                             .doOnError(e -> log.error("Error in createOrder for order {}: {}",
