@@ -9,13 +9,14 @@ import com.example.order.repository.events.ProcessedEventRepository;
 import com.example.order.repository.orders.OrderRepository;
 import com.example.order.repository.saga.SagaFailureRepository;
 import com.example.order.repository.transactions.TransactionLockRepository;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Repository;
 import org.springframework.validation.annotation.Validated;
 import reactor.core.publisher.Mono;
-import reactor.util.retry.Retry;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -25,12 +26,11 @@ import java.time.Duration;
 /**
  * Implementación compuesta del EventRepository que delega en repositorios especializados
  * con capacidades de logging y reintentos para errores transitorios.
- * TODO llevar los métodos privados a una clase abstracta.
  */
 @Primary
 @Repository
 @Validated
-public class CompositeEventRepository implements EventRepository {
+public class CompositeEventRepository extends AbstractEventRepository {
 
     private static final Logger log = LoggerFactory.getLogger(CompositeEventRepository.class);
 
@@ -45,11 +45,17 @@ public class CompositeEventRepository implements EventRepository {
     private final TransactionLockRepository transactionLockRepository;
 
     public CompositeEventRepository(
+            MeterRegistry meterRegistry,
+            CircuitBreakerRegistry circuitBreakerRegistry,
             ProcessedEventRepository processedEventRepository,
             OrderRepository orderRepository,
             SagaFailureRepository sagaFailureRepository,
             EventHistoryRepository eventHistoryRepository,
             TransactionLockRepository transactionLockRepository) {
+
+        // Llamar al constructor padre PRIMERO
+        super(meterRegistry, circuitBreakerRegistry);
+
         this.processedEventRepository = processedEventRepository;
         this.orderRepository = orderRepository;
         this.sagaFailureRepository = sagaFailureRepository;
@@ -58,128 +64,94 @@ public class CompositeEventRepository implements EventRepository {
     }
 
     @Override
+    public Mono<OrderStatus> getOrderStatus(@NotNull Long orderId) {
+        return executeOperation("getOrderStatus",
+                orderRepository.getOrderStatus(orderId),
+                this::isTransientError);
+    }
+
+    @Override
     public Mono<Boolean> isEventProcessed(@NotBlank String eventId) {
-        if (eventId == null || eventId.isBlank()) {
-            return Mono.error(new jakarta.validation.ConstraintViolationException(
-                    "Event ID cannot be null or blank", java.util.Collections.emptySet()));
-        }
-
-        Mono<Boolean> result = processedEventRepository.isEventProcessed(eventId);
-        if (result == null) {
-            return Mono.error(new IllegalStateException(
-                    "Repository returned null instead of Mono for eventId: " + eventId));
-        }
-
-        return result
-                .doOnError(e -> log.error("Error checking if event {} is processed: {}", eventId, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("isEventProcessed",
+                processedEventRepository.isEventProcessed(eventId),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Boolean> isEventProcessed(@NotBlank String eventId, @NotNull DeliveryMode deliveryMode) {
-        if (eventId == null || eventId.isBlank()) {
-            return Mono.error(new jakarta.validation.ConstraintViolationException(
-                    "Event ID cannot be null or blank", java.util.Collections.emptySet()));
-        }
-        if (deliveryMode == null) {
-            return Mono.error(new jakarta.validation.ConstraintViolationException(
-                    "DeliveryMode cannot be null", java.util.Collections.emptySet()));
-        }
-
-        Mono<Boolean> result = processedEventRepository.isEventProcessed(eventId, deliveryMode);
-        if (result == null) {
-            return Mono.error(new IllegalStateException(
-                    "Repository returned null instead of Mono for eventId: " + eventId + ", deliveryMode: " + deliveryMode));
-        }
-
-        return result
-                .doOnError(e -> log.error("Error checking if event {} is processed with delivery mode {}: {}",
-                        eventId, deliveryMode, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("isEventProcessed",
+                processedEventRepository.isEventProcessed(eventId, deliveryMode),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Void> markEventAsProcessed(@NotBlank String eventId) {
-        return processedEventRepository.markEventAsProcessed(eventId)
-                .doOnError(e -> log.error("Error marking event {} as processed: {}", eventId, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("markEventAsProcessed",
+                processedEventRepository.markEventAsProcessed(eventId),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Void> markEventAsProcessed(@NotBlank String eventId, @NotNull DeliveryMode deliveryMode) {
-        return processedEventRepository.markEventAsProcessed(eventId, deliveryMode)
-                .doOnError(e -> log.error("Error marking event {} as processed with delivery mode {}: {}",
-                        eventId, deliveryMode, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("markEventAsProcessed",
+                processedEventRepository.markEventAsProcessed(eventId, deliveryMode),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Boolean> checkAndMarkEventAsProcessed(@NotBlank String eventId, @NotNull DeliveryMode deliveryMode) {
-        return processedEventRepository.checkAndMarkEventAsProcessed(eventId, deliveryMode)
-                .doOnNext(processed -> {
-                    if (processed) {
-                        log.debug("Successfully marked event {} as processed with delivery mode {}",
-                                eventId, deliveryMode);
-                    } else {
-                        log.debug("Event {} was already processed with delivery mode {}",
-                                eventId, deliveryMode);
-                    }
-                })
-                .doOnError(e -> log.error("Error checking and marking event {} as processed with delivery mode {}: {}",
-                        eventId, deliveryMode, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("checkAndMarkEventAsProcessed",
+                processedEventRepository.checkAndMarkEventAsProcessed(eventId, deliveryMode),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Order> findOrderById(@NotNull Long orderId) {
-        return orderRepository.findOrderById(orderId)
-                .doOnError(e -> log.error("Error finding order by ID {}: {}", orderId, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("findOrderById",
+                orderRepository.findOrderById(orderId),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Void> saveOrderData(@NotNull Long orderId, @NotBlank String correlationId,
                                     @NotBlank String eventId, @NotNull OrderEvent event) {
-        return orderRepository.saveOrderData(orderId, correlationId, eventId, event)
-                .doOnError(e -> log.error("Error saving order data for orderId={}, eventId={}: {}",
-                        orderId, eventId, e.getMessage()));
+        return executeOperation("saveOrderData",
+                orderRepository.saveOrderData(orderId, correlationId, eventId, event),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Void> saveOrderData(@NotNull Long orderId, @NotBlank String correlationId,
                                     @NotBlank String eventId, @NotNull OrderEvent event,
                                     @NotNull DeliveryMode deliveryMode) {
-        return orderRepository.saveOrderData(orderId, correlationId, eventId, event, deliveryMode)
-                .doOnError(e -> log.error("Error saving order data for orderId={}, eventId={}, deliveryMode={}: {}",
-                        orderId, eventId, deliveryMode, e.getMessage()));
+        return executeOperation("saveOrderData",
+                orderRepository.saveOrderData(orderId, correlationId, eventId, event, deliveryMode),
+                this::isTransientError);
     }
 
     @Override
-    public Mono<Order> updateOrderStatus(@NotNull Long orderId, @NotBlank OrderStatus status,
+    public Mono<Order> updateOrderStatus(@NotNull Long orderId, @NotNull OrderStatus status,
                                          @NotBlank String correlationId) {
-        return orderRepository.updateOrderStatus(orderId, status, correlationId)
-                .doOnError(e -> log.error("Error updating order status for orderId={} to status={}: {}",
-                        orderId, status, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("updateOrderStatus",
+                orderRepository.updateOrderStatus(orderId, status, correlationId),
+                this::isTransientError);
     }
 
     @Override
-    public Mono<Void> insertStatusAuditLog(@NotNull Long orderId, @NotBlank OrderStatus status,
+    public Mono<Void> insertStatusAuditLog(@NotNull Long orderId, @NotNull OrderStatus status,
                                            @NotBlank String correlationId) {
-        return orderRepository.insertStatusAuditLog(orderId, status, correlationId)
-                .doOnError(e -> log.error("Error inserting status audit log for orderId={}, status={}: {}",
-                        orderId, status, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("insertStatusAuditLog",
+                orderRepository.insertStatusAuditLog(orderId, status, correlationId),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Void> insertCompensationLog(@NotBlank String stepName, @NotNull Long orderId,
                                             @NotBlank String correlationId, @NotBlank String eventId,
-                                            @NotBlank OrderStatus status) {
-        return sagaFailureRepository.insertCompensationLog(stepName, orderId, correlationId, eventId, status)
-                .doOnError(e -> log.error("Error inserting compensation log for orderId={}, stepName={}: {}",
-                        orderId, stepName, e.getMessage()))
-                .retryWhen(createRetrySpec());
+                                            @NotNull OrderStatus status) {
+        return executeOperation("insertCompensationLog",
+                sagaFailureRepository.insertCompensationLog(stepName, orderId, correlationId, eventId, status),
+                this::isTransientError);
     }
 
     @Override
@@ -187,41 +159,37 @@ public class CompositeEventRepository implements EventRepository {
                                         @NotBlank String correlationId, @NotBlank String eventId,
                                         @NotBlank String errorMessage, @NotBlank String errorType,
                                         @NotBlank String errorCategory) {
-        return sagaFailureRepository.recordStepFailure(stepName, orderId, correlationId, eventId,
-                        errorMessage, errorType, errorCategory)
-                .doOnError(e -> log.error("Error recording step failure for orderId={}, stepName={}: {}",
-                        orderId, stepName, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("recordStepFailure",
+                sagaFailureRepository.recordStepFailure(stepName, orderId, correlationId, eventId,
+                        errorMessage, errorType, errorCategory),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Void> recordSagaFailure(@NotNull Long orderId, @NotBlank String correlationId,
                                         @NotBlank String errorMessage, @NotBlank String errorType,
                                         @NotBlank String errorCategory) {
-        return sagaFailureRepository.recordSagaFailure(orderId, correlationId, errorMessage, errorType, errorCategory)
-                .doOnError(e -> log.error("Error recording saga failure for orderId={}, errorType={}: {}",
-                        orderId, errorType, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("recordSagaFailure",
+                sagaFailureRepository.recordSagaFailure(orderId, correlationId, errorMessage, errorType, errorCategory),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Void> recordSagaFailure(@NotNull Long orderId, @NotBlank String correlationId,
                                         @NotBlank String errorMessage, @NotBlank String errorType,
                                         @NotNull DeliveryMode deliveryMode) {
-        return sagaFailureRepository.recordSagaFailure(orderId, correlationId, errorMessage, errorType, deliveryMode)
-                .doOnError(e -> log.error("Error recording saga failure for orderId={}, errorType={}, deliveryMode={}: {}",
-                        orderId, errorType, deliveryMode, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("recordSagaFailure",
+                sagaFailureRepository.recordSagaFailure(orderId, correlationId, errorMessage, errorType, deliveryMode),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Void> saveEventHistory(@NotBlank String eventId, @NotBlank String correlationId,
                                        @NotNull Long orderId, @NotBlank String eventType,
                                        @NotBlank String operation, @NotBlank String outcome) {
-        return eventHistoryRepository.saveEventHistory(eventId, correlationId, orderId, eventType, operation, outcome)
-                .doOnError(e -> log.error("Error saving event history for eventId={}, orderId={}: {}",
-                        eventId, orderId, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("saveEventHistory",
+                eventHistoryRepository.saveEventHistory(eventId, correlationId, orderId, eventType, operation, outcome),
+                this::isTransientError);
     }
 
     @Override
@@ -229,85 +197,41 @@ public class CompositeEventRepository implements EventRepository {
                                        @NotNull Long orderId, @NotBlank String eventType,
                                        @NotBlank String operation, @NotBlank String outcome,
                                        @NotNull DeliveryMode deliveryMode) {
-        return eventHistoryRepository.saveEventHistory(eventId, correlationId, orderId, eventType,
-                        operation, outcome, deliveryMode)
-                .doOnError(e -> log.error("Error saving event history for eventId={}, orderId={}, deliveryMode={}: {}",
-                        eventId, orderId, deliveryMode, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("saveEventHistory",
+                eventHistoryRepository.saveEventHistory(eventId, correlationId, orderId, eventType,
+                        operation, outcome, deliveryMode),
+                this::isTransientError);
     }
 
     @Override
     public Mono<Boolean> acquireTransactionLock(String resourceId, String correlationId, int timeoutSeconds) {
-        if (resourceId == null || resourceId.isBlank()) {
-            return Mono.error(new IllegalArgumentException("Resource ID cannot be null or blank"));
-        }
-        if (correlationId == null || correlationId.isBlank()) {
-            return Mono.error(new IllegalArgumentException("Correlation ID cannot be null or blank"));
-        }
-
-        Mono<Boolean> result = transactionLockRepository.acquireTransactionLock(resourceId, correlationId, timeoutSeconds);
-        if (result == null) {
-            return Mono.error(new IllegalStateException(
-                    "Repository returned null instead of Mono for resourceId: " + resourceId));
-        }
-
-        return result
-                .doOnNext(acquired -> {
-                    if (!acquired) {
-                        log.info("Failed to acquire lock for resource={}, correlationId={} (resource is locked)",
-                                resourceId, correlationId);
-                    }
-                })
-                .doOnError(e -> log.error("Error acquiring transaction lock for resource={}, correlationId={}: {}",
-                        resourceId, correlationId, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("acquireTransactionLock",
+                transactionLockRepository.acquireTransactionLock(resourceId, correlationId, timeoutSeconds),
+                this::isTransientError);
     }
+
     @Override
     public Mono<Void> releaseTransactionLock(String resourceId, String correlationId) {
-        if (resourceId == null || resourceId.isBlank()) {
-            return Mono.error(new IllegalArgumentException("Resource ID cannot be null or blank"));
-        }
-        if (correlationId == null || correlationId.isBlank()) {
-            return Mono.error(new IllegalArgumentException("Correlation ID cannot be null or blank"));
-        }
-
-        Mono<Void> result = transactionLockRepository.releaseTransactionLock(resourceId, correlationId);
-        if (result == null) {
-            return Mono.error(new IllegalStateException(
-                    "Repository returned null instead of Mono for resourceId: " + resourceId));
-        }
-
-        return result
-                .doOnSuccess(v -> log.debug("Successfully released lock for resource={}, correlationId={}",
-                        resourceId, correlationId))
-                .doOnError(e -> log.error("Error releasing transaction lock for resource={}: {}",
-                        resourceId, e.getMessage()))
-                .retryWhen(createRetrySpec());
+        return executeOperation("releaseTransactionLock",
+                transactionLockRepository.releaseTransactionLock(resourceId, correlationId),
+                this::isTransientError);
     }
-    // Modify the createRetrySpec() method in CompositeEventRepository.java
-    private Retry createRetrySpec() {
-        return Retry.backoff(MAX_RETRIES, RETRY_BACKOFF)
-                .filter(this::isTransientError)
-                .doBeforeRetry(retrySignal -> {
-                    // Log retry attempt for better visibility in tests
-                    log.debug("Retry attempt #{} after error: {}",
-                            retrySignal.totalRetries() + 1,
-                            retrySignal.failure().getMessage());
-                })
-                .onRetryExhaustedThrow((retryBackoffSpec, retrySignal) -> {
-                    // Simply propagate the original exception when retries are exhausted
-                    log.error("Retry exhausted after {} attempts", MAX_RETRIES);
-                    return retrySignal.failure();
-                });
-    }
-
-
 
     /**
-     * Determines if an error is transient and can be retried
+     * Sobrescribe el método de la clase padre para agregar lógica específica de CompositeEventRepository
+     * Mantiene el modificador de acceso 'protected' para ser consistente con la clase padre
      */
-    private boolean isTransientError(Throwable throwable) {
-        // Special handling for test-specific errors
+    @Override
+    protected boolean isTransientError(Throwable throwable) {
+        // Primero, usa la lógica del padre
+        boolean parentResult = super.isTransientError(throwable);
+
+        // Si el padre ya determinó que es transitorio, retornamos true
+        if (parentResult) {
+            return true;
+        }
+
+        // Lógica adicional específica para CompositeEventRepository
         if (throwable instanceof RuntimeException) {
             String errorMsg = throwable.getMessage();
             if (errorMsg != null && (
@@ -362,7 +286,7 @@ public class CompositeEventRepository implements EventRepository {
         return false;
     }
 
-// Métodos auxiliares para clasificación específica de errores
+    // Métodos auxiliares para clasificación específica de errores (mantenerlos como private está bien)
 
     /**
      * Detecta errores relacionados con problemas de conexión
@@ -502,25 +426,5 @@ public class CompositeEventRepository implements EventRepository {
                 message.contains("connection") ||
                 message.contains("timeout") ||
                 message.contains("retry");
-    }
-
-    /**
-     * Política específica para errores de Reactor
-     */
-    private boolean shouldRetryReactorError(Throwable throwable) {
-        String className = throwable.getClass().getName();
-
-        // No reintentar si ya estamos en un contexto de reintento agotado
-        if (className.contains("RetryExhaustedException")) {
-            return false;
-        }
-
-        // Profundizar en la causa real del error de Reactor
-        if (throwable.getCause() != null && throwable.getCause() != throwable) {
-            return isTransientError(throwable.getCause());
-        }
-
-        // Por defecto, considerar los errores de Reactor como transitorios
-        return true;
     }
 }

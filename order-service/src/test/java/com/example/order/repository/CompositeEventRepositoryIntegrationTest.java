@@ -5,6 +5,9 @@ import com.example.order.repository.events.ProcessedEventRepository;
 import com.example.order.repository.orders.OrderRepository;
 import com.example.order.repository.saga.SagaFailureRepository;
 import com.example.order.repository.transactions.TransactionLockRepository;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -43,7 +46,6 @@ import static org.mockito.Mockito.mock;
 @Testcontainers
 @SpringBootTest
 @ActiveProfiles("unit")
-
 public class CompositeEventRepositoryIntegrationTest {
 
     private static final Logger log = LoggerFactory.getLogger(CompositeEventRepositoryIntegrationTest.class);
@@ -102,18 +104,25 @@ public class CompositeEventRepositoryIntegrationTest {
         // Resetear el simulador de fallos
         failureSimulator.reset();
 
-        // Inicializar el repositorio compuesto
+        // Crear instancias de MeterRegistry y CircuitBreakerRegistry para el test
+        MeterRegistry meterRegistry = new SimpleMeterRegistry();
+        CircuitBreakerRegistry circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults();
+
+        // Mock de otros repositorios para el test
         OrderRepository orderRepository = mock(OrderRepository.class);
         SagaFailureRepository sagaFailureRepository = mock(SagaFailureRepository.class);
         EventHistoryRepository eventHistoryRepository = mock(EventHistoryRepository.class);
         TransactionLockRepository transactionLockRepository = mock(TransactionLockRepository.class);
 
+        // Inicializar el repositorio compuesto con todos los parámetros requeridos
         compositeEventRepository = new CompositeEventRepository(
-                processedEventRepository,
-                orderRepository,
-                sagaFailureRepository,
-                eventHistoryRepository,
-                transactionLockRepository
+                meterRegistry,                      // Parámetro 1: MeterRegistry
+                circuitBreakerRegistry,             // Parámetro 2: CircuitBreakerRegistry
+                processedEventRepository,           // Parámetro 3: ProcessedEventRepository
+                orderRepository,                    // Parámetro 4: OrderRepository
+                sagaFailureRepository,              // Parámetro 5: SagaFailureRepository
+                eventHistoryRepository,             // Parámetro 6: EventHistoryRepository
+                transactionLockRepository           // Parámetro 7: TransactionLockRepository
         );
     }
 
@@ -231,6 +240,22 @@ public class CompositeEventRepositoryIntegrationTest {
         @Primary
         public FailureSimulator failureSimulator() {
             return new FailureSimulator();
+        }
+
+        /**
+         * Bean para MeterRegistry en los tests
+         */
+        @Bean
+        public MeterRegistry testMeterRegistry() {
+            return new SimpleMeterRegistry();
+        }
+
+        /**
+         * Bean para CircuitBreakerRegistry en los tests
+         */
+        @Bean
+        public CircuitBreakerRegistry testCircuitBreakerRegistry() {
+            return CircuitBreakerRegistry.ofDefaults();
         }
     }
 

@@ -6,6 +6,7 @@ import java.util.Map;
 /**
  * Clase que gestiona las transiciones de estado para órdenes
  */
+@Deprecated(since = "1.0", forRemoval = true)
 public class OrderStateTransition {
 
     // Mapa para definir las transiciones válidas entre estados

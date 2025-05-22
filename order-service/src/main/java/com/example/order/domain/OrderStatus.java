@@ -68,8 +68,7 @@ public enum OrderStatus {
     ORDER_ABORTED("ORDER_ABORTED"),                     // Orden abortada por sistema
 
     // Estado especial
-    ORDER_UNKNOWN("ORDER_UNKNOWN");                     // Estado desconocido
-
+    ORDER_UNKNOWN("ORDER_UNKNOWN");
     private final String value;
 
     OrderStatus(String value) {

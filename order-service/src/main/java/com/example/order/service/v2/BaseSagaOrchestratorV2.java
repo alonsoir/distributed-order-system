@@ -5,6 +5,7 @@ import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
 import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.OrderStatus;
+import com.example.order.domain.OrderStateMachine;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
@@ -27,10 +28,11 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Implementación base para orquestadores de sagas con funcionalidad común.
- * Esta versión usa EventRepository en lugar de DatabaseClient directamente.
+ * Esta versión usa EventRepository en lugar de DatabaseClient directamente e integra OrderStateMachine.
  */
 public abstract class BaseSagaOrchestratorV2 {
     private static final Logger log = LoggerFactory.getLogger(BaseSagaOrchestratorV2.class);
@@ -41,6 +43,8 @@ public abstract class BaseSagaOrchestratorV2 {
     protected final ResilienceManager resilienceManager;
     protected final EventPublisher eventPublisher;
     protected final EventRepository eventRepository;
+    // Añadimos OrderStateMachine como un componente central
+    protected final OrderStateMachine stateMachine;
 
     protected BaseSagaOrchestratorV2(
             TransactionalOperator transactionalOperator,
@@ -55,10 +59,12 @@ public abstract class BaseSagaOrchestratorV2 {
         this.resilienceManager = resilienceManager;
         this.eventPublisher = eventPublisher;
         this.eventRepository = eventRepository;
+        // Inicializamos el stateMachine
+        this.stateMachine = OrderStateMachine.getInstance();
     }
 
     /**
-     * Crea un paso de reserva de stock
+     * Crea un paso de reserva de stock usando el topic del stateMachine
      */
     protected SagaStep createReserveStockStep(
             InventoryService inventoryService,
@@ -67,9 +73,20 @@ public abstract class BaseSagaOrchestratorV2 {
             String correlationId,
             String eventId,
             String externalReference) {
+
+        // Determinamos el topic adecuado basado en la transición de estado
+        String topic = stateMachine.getTopicNameForTransition(
+                OrderStatus.PAYMENT_CONFIRMED, OrderStatus.STOCK_RESERVED);
+
+        // Si no hay un topic específico definido, usamos el valor por defecto
+        if (topic == null) {
+            topic = EventTopics.STOCK_RESERVED.getTopicName();
+            log.warn("No topic defined for transition PAYMENT_CONFIRMED -> STOCK_RESERVED, using default: {}", topic);
+        }
+
         return SagaStep.builder()
                 .name("reserveStock")
-                .topic(EventTopics.STOCK_RESERVED.getTopicName())
+                .topic(topic)
                 .action(() -> inventoryService.reserveStock(orderId, quantity))
                 .compensation(() -> inventoryService.releaseStock(orderId, quantity))
                 .successEvent(eventSuccessId -> new StockReservedEvent(orderId, correlationId, eventId, externalReference, quantity))
@@ -90,6 +107,8 @@ public abstract class BaseSagaOrchestratorV2 {
                         orderId, e.getMessage(), e))
                 .transform(resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS));
     }
+
+
 
     /**
      * Maneja un error al crear una orden
@@ -112,87 +131,38 @@ public abstract class BaseSagaOrchestratorV2 {
                 .then(Mono.just(new Order(orderId, "failed", correlationId)));
     }
 
-    /**
-     * Actualiza el estado de una orden con registro en historial
-     */
-    protected Mono<Order> updateOrderStatus(Long orderId, OrderStatus status, String correlationId) {
-        Map<String, String> context = ReactiveUtils.createContext(
-                "orderId", orderId.toString(),
-                "correlationId", correlationId,
-                "status", status.getValue()
-        );
-
-        return ReactiveUtils.withDiagnosticContext(context, () ->
-                // Actualización atómica dentro de una transacción
-                transactionalOperator.transactional(
-                        eventRepository.updateOrderStatus(orderId, status, correlationId)
-                                .transform(resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS))
-                ));
-    }
 
     /**
-     * Maneja un error en un paso de saga con registro detallado
+     * Determina el estado de error adecuado basado en el estado actual
+     * @param currentStatus El estado actual de la orden
+     * @return El estado de error más apropiado
      */
-    protected Mono<OrderEvent> handleStepError(SagaStep step, Throwable e, CompensationManager compensationManager) {
-        String errorMessage = e.getMessage() != null ? e.getMessage() : "Unknown error";
-        String errorType = e.getClass().getSimpleName();
+    protected OrderStatus determineErrorStatus(OrderStatus currentStatus) {
+        // Verificamos qué estados de error son transiciones válidas desde el estado actual
+        Set<OrderStatus> validNextStates = stateMachine.getValidNextStates(currentStatus);
 
-        Map<String, String> context = ReactiveUtils.createContext(
-                "stepName", step.getName(),
-                "orderId", step.getOrderId().toString(),
-                "correlationId", step.getCorrelationId(),
-                "eventId", step.getEventId(),
-                "errorType", errorType,
-                "errorMessage", errorMessage
-        );
-
-        return ReactiveUtils.withDiagnosticContext(context, () -> {
-            log.error("Step {} failed for order {}: {}", step.getName(), step.getOrderId(), errorMessage, e);
-
-            // Crear el evento de fallo
-            OrderFailedEvent failedEvent = new OrderFailedEvent(
-                    step.getOrderId(),
-                    step.getCorrelationId(),
-                    step.getEventId(),
-                    SagaStepType.FAILED_ORDER,
-                    String.format("%s: %s", errorType, errorMessage),
-                    step.getExternalReference());
-
-            // Registrar el fallo y ejecutar compensación
-            return eventRepository.recordStepFailure(
-                            step.getName(),
-                            step.getOrderId(),
-                            step.getCorrelationId(),
-                            step.getEventId(),
-                            errorMessage,
-                            errorType,
-                            "FUNCTIONAL")
-                    .then(eventRepository.recordSagaFailure(
-                            step.getOrderId(),
-                            step.getCorrelationId(),
-                            errorMessage,
-                            errorType,
-                            "FUNCTIONAL"))
-                    // Publicar el evento de fallo
-                    .then(publishFailedEvent(failedEvent))
-                    // Registrar inicio de compensación
-                    .then(eventRepository.insertCompensationLog(
-                            step.getName(),
-                            step.getOrderId(),
-                            step.getCorrelationId(),
-                            step.getEventId(),OrderStatus.ORDER_CREATED))
-                    // Ejecutar la compensación
-                    .then(compensationManager.executeCompensation(step))
-                    // Actualizar estado de la compensación a completado
-                    .then(eventRepository.insertCompensationLog(
-                            step.getName(),
-                            step.getOrderId(),
-                            step.getCorrelationId(),
-                            step.getEventId(),
-                            OrderStatus.ORDER_CREATED))
-
-                    .then(Mono.error(e)); // Propagamos el error original
-        });
+        // Prioridad de estados de error
+        if (validNextStates.contains(OrderStatus.ORDER_FAILED)) {
+            return OrderStatus.ORDER_FAILED;
+        } else if (validNextStates.contains(OrderStatus.TECHNICAL_EXCEPTION)) {
+            return OrderStatus.TECHNICAL_EXCEPTION;
+        } else if (validNextStates.contains(OrderStatus.SHIPPING_EXCEPTION)) {
+            return OrderStatus.SHIPPING_EXCEPTION;
+        } else if (validNextStates.contains(OrderStatus.DELIVERY_EXCEPTION)) {
+            return OrderStatus.DELIVERY_EXCEPTION;
+        } else if (validNextStates.contains(OrderStatus.PAYMENT_DECLINED)) {
+            return OrderStatus.PAYMENT_DECLINED;
+        } else if (validNextStates.contains(OrderStatus.STOCK_UNAVAILABLE)) {
+            return OrderStatus.STOCK_UNAVAILABLE;
+        } else if (validNextStates.contains(OrderStatus.ORDER_CANCELED)) {
+            return OrderStatus.ORDER_CANCELED;
+        } else if (validNextStates.contains(OrderStatus.MANUAL_REVIEW)) {
+            return OrderStatus.MANUAL_REVIEW;
+        } else {
+            // Si no hay un estado de error válido, usamos MANUAL_REVIEW como último recurso
+            log.warn("No valid error state transition from {}, forcing MANUAL_REVIEW", currentStatus);
+            return OrderStatus.MANUAL_REVIEW;
+        }
     }
 
     /**
@@ -265,7 +235,138 @@ public abstract class BaseSagaOrchestratorV2 {
     }
 
     /**
-     * Publica un evento de fallo con registro en tablas especializadas
+     * Actualiza el estado de una orden con validación de transición
+     */
+    protected Mono<Order> updateOrderStatus(Long orderId, OrderStatus newStatus, String correlationId) {
+        Map<String, String> context = ReactiveUtils.createContext(
+                "orderId", orderId.toString(),
+                "correlationId", correlationId,
+                "status", newStatus.getValue()
+        );
+
+        return ReactiveUtils.withDiagnosticContext(context, () ->
+                // Primero obtenemos el estado actual para validar la transición
+                eventRepository.getOrderStatus(orderId)
+                        .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
+                        .flatMap(currentStatus -> {
+                            // Validamos la transición usando OrderStateMachine
+                            if (!stateMachine.isValidTransition(currentStatus, newStatus)) {
+                                log.warn("Invalid state transition from {} to {} for order {}",
+                                        currentStatus, newStatus, orderId);
+
+                                // Si la transición no es válida, intentamos encontrar una transición alternativa
+                                Set<OrderStatus> validNextStates = stateMachine.getValidNextStates(currentStatus);
+                                if (validNextStates.contains(OrderStatus.TECHNICAL_EXCEPTION)) {
+                                    log.info("Transitioning to TECHNICAL_EXCEPTION instead for order {}", orderId);
+                                    return transactionalOperator.transactional(
+                                            eventRepository.updateOrderStatus(orderId, OrderStatus.TECHNICAL_EXCEPTION, correlationId)
+                                                    .transform(resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS))
+                                    );
+                                } else {
+                                    // Si no hay alternativa viable, permitimos la transición pero la registramos como anomalía
+                                    log.error("Forcing invalid transition from {} to {} for order {}",
+                                            currentStatus, newStatus, orderId);
+                                    meterRegistry.counter("invalid_state_transitions",
+                                            "from", currentStatus.name(),
+                                            "to", newStatus.name()).increment();
+                                }
+                            }
+
+                            // Actualizamos el estado
+                            return transactionalOperator.transactional(
+                                    eventRepository.updateOrderStatus(orderId, newStatus, correlationId)
+                                            .transform(resilienceManager.applyResilience(CircuitBreakerCategory.DATABASE_OPERATIONS))
+                            );
+                        })
+        );
+    }
+
+    /**
+     * Maneja un error en un paso de saga con registro detallado y transición adecuada
+     */
+    protected Mono<OrderEvent> handleStepError(SagaStep step, Throwable e, CompensationManager compensationManager) {
+        String errorMessage = e.getMessage() != null ? e.getMessage() : "Unknown error";
+        String errorType = e.getClass().getSimpleName();
+
+        Map<String, String> context = ReactiveUtils.createContext(
+                "stepName", step.getName(),
+                "orderId", step.getOrderId().toString(),
+                "correlationId", step.getCorrelationId(),
+                "eventId", step.getEventId(),
+                "errorType", errorType,
+                "errorMessage", errorMessage
+        );
+
+        return ReactiveUtils.withDiagnosticContext(context, () -> {
+            log.error("Step {} failed for order {}: {}", step.getName(), step.getOrderId(), errorMessage, e);
+
+            // Obtener el estado actual para determinar la transición adecuada para el error
+            return eventRepository.getOrderStatus(step.getOrderId())
+                    .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
+                    .flatMap(currentStatus -> {
+                        // Decidir el estado de error adecuado basado en el estado actual
+                        OrderStatus errorStatus = determineErrorStatus(currentStatus);
+
+                        // Crear el evento de fallo
+                        OrderFailedEvent failedEvent = new OrderFailedEvent(
+                                step.getOrderId(),
+                                step.getCorrelationId(),
+                                step.getEventId(),
+                                SagaStepType.FAILED_ORDER,
+                                String.format("%s: %s", errorType, errorMessage),
+                                step.getExternalReference());
+
+                        // Obtener el topic adecuado para la transición de error
+                        String errorTopic = stateMachine.getTopicNameForTransition(currentStatus, errorStatus);
+                        if (errorTopic == null) {
+                            // Si no hay un topic específico para esta transición, usamos el predeterminado
+                            errorTopic = EventTopics.ORDER_FAILED.getTopicName();
+                            log.warn("No topic defined for error transition {} -> {}, using default: {}",
+                                    currentStatus, errorStatus, errorTopic);
+                        }
+
+                        // Registrar el fallo y ejecutar compensación
+                        return eventRepository.recordStepFailure(
+                                        step.getName(),
+                                        step.getOrderId(),
+                                        step.getCorrelationId(),
+                                        step.getEventId(),
+                                        errorMessage,
+                                        errorType,
+                                        "FUNCTIONAL")
+                                .then(eventRepository.recordSagaFailure(
+                                        step.getOrderId(),
+                                        step.getCorrelationId(),
+                                        errorMessage,
+                                        errorType,
+                                        "FUNCTIONAL"))
+                                // Actualizar el estado de la orden al estado de error
+                                .then(eventRepository.updateOrderStatus(step.getOrderId(), errorStatus, step.getCorrelationId()))
+                                // Publicar el evento de fallo
+                                .then(publishEvent(failedEvent, "failedEvent", errorTopic))
+                                // Registrar inicio de compensación
+                                .then(eventRepository.insertCompensationLog(
+                                        step.getName(),
+                                        step.getOrderId(),
+                                        step.getCorrelationId(),
+                                        step.getEventId(),
+                                        currentStatus))
+                                // Ejecutar la compensación
+                                .then(compensationManager.executeCompensation(step))
+                                // Actualizar estado de la compensación a completado
+                                .then(eventRepository.insertCompensationLog(
+                                        step.getName(),
+                                        step.getOrderId(),
+                                        step.getCorrelationId(),
+                                        step.getEventId(),
+                                        errorStatus))
+                                .then(Mono.error(e)); // Propagamos el error original
+                    });
+        });
+    }
+
+    /**
+     * Publica un evento de fallo con topic definido en OrderStateMachine
      */
     protected Mono<Void> publishFailedEvent(OrderFailedEvent event) {
         Map<String, String> context = ReactiveUtils.createContext(
@@ -281,15 +382,31 @@ public abstract class BaseSagaOrchestratorV2 {
             log.info("Publishing failure event for order {} with reason: {}",
                     event.getOrderId(), event.getReason());
 
-            // Registrar fallo con tipo de error específico
-            return eventRepository.recordSagaFailure(
-                            event.getOrderId(),
-                            event.getCorrelationId(),
-                            event.getReason(),
-                            SagaStepType.FAILED_EVENT.name(),
-                            DeliveryMode.AT_LEAST_ONCE)
-                    // Continuar con la publicación normal
-                    .then(publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopicName()).then());
+            // Obtener el estado actual para determinar el topic adecuado
+            return eventRepository.getOrderStatus(event.getOrderId())
+                    .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
+                    .flatMap(currentStatus -> {
+                        // Determinar el topic adecuado usando OrderStateMachine
+                        String failureTopic = stateMachine.getTopicNameForTransition(
+                                currentStatus, OrderStatus.ORDER_FAILED);
+
+                        if (failureTopic == null) {
+                            // Si no hay un topic específico, usamos el predeterminado
+                            failureTopic = EventTopics.ORDER_FAILED.getTopicName();
+                            log.warn("No topic defined for failure transition {} -> ORDER_FAILED, using default: {}",
+                                    currentStatus, failureTopic);
+                        }
+
+                        // Registrar fallo con tipo de error específico
+                        return eventRepository.recordSagaFailure(
+                                        event.getOrderId(),
+                                        event.getCorrelationId(),
+                                        event.getReason(),
+                                        SagaStepType.FAILED_EVENT.name(),
+                                        DeliveryMode.AT_LEAST_ONCE)
+                                // Continuar con la publicación usando el topic determinado
+                                .then(publishEvent(event, "failedEvent", failureTopic).then());
+                    });
         });
     }
 

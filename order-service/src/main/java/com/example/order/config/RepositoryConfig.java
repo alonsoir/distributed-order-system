@@ -7,8 +7,11 @@ import com.example.order.repository.base.ValidationUtils;
 import com.example.order.repository.events.EventHistoryRepository;
 import com.example.order.repository.events.ProcessedEventRepository;
 import com.example.order.repository.orders.OrderRepository;
+import com.example.order.repository.orders.OrderRepositoryImpl;  // Importar la implementación
 import com.example.order.repository.saga.SagaFailureRepository;
 import com.example.order.repository.transactions.TransactionLockRepository;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
@@ -86,7 +89,7 @@ public class RepositoryConfig {
     }
 
     /**
-     * OrderRepository - Repositorio para órdenes
+     * OrderRepository - Repositorio para órdenes (usando la implementación concreta)
      * Utiliza @Lazy en la inyección de ProcessedEventRepository para romper la dependencia circular
      */
     @Bean
@@ -96,7 +99,7 @@ public class RepositoryConfig {
             SecurityUtils securityUtils,
             ValidationUtils validationUtils,
             @Lazy ProcessedEventRepository processedEventRepository) {  // @Lazy es una solución temporal para la dependencia circular
-        return new OrderRepository(
+        return new OrderRepositoryImpl(  // Usar la implementación concreta
                 databaseClient,
                 transactionalOperator,
                 securityUtils,
@@ -154,16 +157,21 @@ public class RepositoryConfig {
 
     /**
      * Implementación principal de EventRepository que compone múltiples repositorios especializados
+     * Ahora incluye MeterRegistry y CircuitBreakerRegistry para las capacidades de resiliencia
      */
     @Bean
     @Primary
     public EventRepository eventRepository(
+            MeterRegistry meterRegistry,
+            CircuitBreakerRegistry circuitBreakerRegistry,
             ProcessedEventRepository processedEventRepository,
             OrderRepository orderRepository,
             SagaFailureRepository sagaFailureRepository,
             EventHistoryRepository eventHistoryRepository,
             TransactionLockRepository transactionLockRepository) {
         return new CompositeEventRepository(
+                meterRegistry,
+                circuitBreakerRegistry,
                 processedEventRepository,
                 orderRepository,
                 sagaFailureRepository,

@@ -4,7 +4,7 @@ import com.example.order.config.CircuitBreakerCategory;
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
 import com.example.order.domain.DeliveryMode;
-import com.example.order.domain.OrderStateTransition;
+import com.example.order.domain.OrderStateMachine;
 import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderEvent;
@@ -33,11 +33,12 @@ import reactor.util.retry.Retry;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
  * Implementación base reforzada para orquestadores de sagas con funcionalidad común
- * Versión 2 que elimina las referencias directas a DatabaseClient
+ * Versión 2 que elimina las referencias directas a DatabaseClient y usa OrderStateMachine
  */
 public abstract class RobustBaseSagaOrchestratorV2 {
     private static final Logger log = LoggerFactory.getLogger(RobustBaseSagaOrchestratorV2.class);
@@ -61,6 +62,9 @@ public abstract class RobustBaseSagaOrchestratorV2 {
     protected final EventPublisher eventPublisher;
     protected final EventRepository eventRepository;
 
+    // MIGRACIÓN: Añadir OrderStateMachine
+    protected final OrderStateMachine stateMachine;
+
     protected RobustBaseSagaOrchestratorV2(
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
@@ -74,6 +78,8 @@ public abstract class RobustBaseSagaOrchestratorV2 {
         this.resilienceManager = resilienceManager;
         this.eventPublisher = eventPublisher;
         this.eventRepository = eventRepository;
+        // MIGRACIÓN: Inicializar OrderStateMachine
+        this.stateMachine = OrderStateMachine.getInstance();
     }
 
     /**
@@ -123,7 +129,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
     }
 
     /**
-     * Crea un paso de reserva de stock con validación reforzada
+     * Crea un paso de reserva de stock con validación reforzada usando OrderStateMachine
      */
     protected SagaStep createReserveStockStep(
             InventoryService inventoryService,
@@ -145,9 +151,21 @@ public abstract class RobustBaseSagaOrchestratorV2 {
             throw new IllegalArgumentException("Quantity must be positive");
         }
 
+        // MIGRACIÓN: Usar OrderStateMachine para obtener el topic
+        String topic = stateMachine.getTopicNameForTransition(
+                OrderStatus.PAYMENT_CONFIRMED, OrderStatus.STOCK_RESERVED);
+
+        // Si no hay un topic específico en el stateMachine, usamos el predeterminado
+        if (topic == null) {
+            topic = EventTopics.STOCK_RESERVED.getTopicName();
+            log.warn("No topic defined for PAYMENT_CONFIRMED -> STOCK_RESERVED transition, using default: {}", topic);
+        } else {
+            log.debug("Using topic from state machine for PAYMENT_CONFIRMED -> STOCK_RESERVED: {}", topic);
+        }
+
         return SagaStep.builder()
                 .name("reserveStock")
-                .topic(EventTopics.STOCK_RESERVED.getTopicName())
+                .topic(topic)
                 .stepType(SagaStepType.RESERVE_STOCK)
                 .action(() -> inventoryService.reserveStock(orderId, quantity)
                         .timeout(SAGA_STEP_TIMEOUT)
@@ -206,10 +224,29 @@ public abstract class RobustBaseSagaOrchestratorV2 {
             // Primero verificamos si la transición es válida
             return findExistingOrder(orderId)
                     .flatMap(existingOrder -> {
-                        // Verificar si la transición es válida
-                        if (!OrderStateTransition.isValidTransition(existingOrder.status(), newStatus)) {
+                        // MIGRACIÓN: Usar OrderStateMachine en lugar de OrderStateTransition
+                        if (!stateMachine.isValidTransition(existingOrder.status(), newStatus)) {
                             log.warn("Invalid state transition from {} to {} for order {}",
                                     existingOrder.status(), newStatus, orderId);
+
+                            // MIGRACIÓN: Usar OrderStateMachine para obtener estados válidos
+                            Set<OrderStatus> validNextStates = stateMachine.getValidNextStates(existingOrder.status());
+
+                            // Buscar una transición alternativa válida
+                            OrderStatus alternativeStatus = findBestAlternativeStatus(validNextStates, newStatus);
+                            if (alternativeStatus != null) {
+                                log.info("Using alternative transition to {} for order {}", alternativeStatus, orderId);
+                                return eventRepository.updateOrderStatus(orderId, alternativeStatus, correlationId)
+                                        .doOnSuccess(order -> {
+                                            log.info("Updated order {} status to {} (alternative)", orderId, alternativeStatus);
+                                            timer.stop(meterRegistry.timer("saga.order.status.update", Tags.of(tags)));
+                                        })
+                                        .doOnError(ex -> {
+                                            log.error("Failed to update order {} status: {}", orderId, ex.getMessage(), ex);
+                                            meterRegistry.counter("saga.order.status.error", Tags.of(tags)).increment();
+                                        })
+                                        .transform(finalResilience);
+                            }
 
                             // Opción 1: Retornar la orden sin cambios
                             return Mono.just(existingOrder);
@@ -225,13 +262,47 @@ public abstract class RobustBaseSagaOrchestratorV2 {
                                     log.info("Updated order {} status to {}", orderId, newStatus);
                                     timer.stop(meterRegistry.timer("saga.order.status.update", Tags.of(tags)));
                                 })
-                                .doOnError(e -> {
-                                    log.error("Failed to update order {} status: {}", orderId, e.getMessage(), e);
+                                .doOnError(ex -> {
+                                    log.error("Failed to update order {} status: {}", orderId, ex.getMessage(), ex);
                                     meterRegistry.counter("saga.order.status.error", Tags.of(tags)).increment();
                                 })
-                                .transform(finalResilience); // Usamos la función resilience que ahora es final
+                                .transform(finalResilience);
                     });
         });
+    }
+
+    /**
+     * MIGRACIÓN: Busca el mejor estado alternativo cuando la transición deseada no es válida
+     */
+    private OrderStatus findBestAlternativeStatus(Set<OrderStatus> validNextStates, OrderStatus desiredStatus) {
+        if (validNextStates.isEmpty()) {
+            return null;
+        }
+
+        // Estrategias de priorización basadas en el tipo de estado deseado
+        if (desiredStatus == OrderStatus.ORDER_COMPLETED) {
+            // Para completar orden, priorizamos estados progresivos
+            if (validNextStates.contains(OrderStatus.ORDER_PROCESSING)) {
+                return OrderStatus.ORDER_PROCESSING;
+            }
+            if (validNextStates.contains(OrderStatus.ORDER_PREPARED)) {
+                return OrderStatus.ORDER_PREPARED;
+            }
+            if (validNextStates.contains(OrderStatus.SHIPPING_PENDING)) {
+                return OrderStatus.SHIPPING_PENDING;
+            }
+        } else if (desiredStatus == OrderStatus.ORDER_FAILED) {
+            // Para estados de error, priorizamos excepciones técnicas
+            if (validNextStates.contains(OrderStatus.TECHNICAL_EXCEPTION)) {
+                return OrderStatus.TECHNICAL_EXCEPTION;
+            }
+            if (validNextStates.contains(OrderStatus.MANUAL_REVIEW)) {
+                return OrderStatus.MANUAL_REVIEW;
+            }
+        }
+
+        // Si no hay una alternativa específica, devolver null
+        return null;
     }
 
     // Método separado para obtener la función de resiliencia
@@ -361,8 +432,11 @@ public abstract class RobustBaseSagaOrchestratorV2 {
         });
     }
 
+    /**
+     * MIGRACIÓN: Método actualizado para usar OrderStateMachine
+     */
     protected boolean isValidStateTransition(Order order, OrderStatus newStatus) {
-        return OrderStateTransition.isValidTransition(order.status(), newStatus);
+        return stateMachine.isValidTransition(order.status(), newStatus);
     }
 
     /**
@@ -591,16 +665,51 @@ public abstract class RobustBaseSagaOrchestratorV2 {
     }
 
     /**
-     * Publica un evento de fallo
+     * Publica un evento de fallo usando OrderStateMachine para determinar el topic
      */
     protected Mono<Void> publishFailedEvent(OrderFailedEvent event) {
-        return publishEvent(event, "failedEvent", EventTopics.ORDER_FAILED.getTopicName())
-                .onErrorResume(e -> {
-                    log.error("Failed to publish failure event: {}", e.getMessage(), e);
-                    // Métrica crítica - fallo al publicar evento de fallo
-                    meterRegistry.counter("saga.critical.event.failure").increment();
-                    return Mono.empty(); // No propagamos el error para no bloquear la compensación
-                })
-                .then();
+        if (event == null) {
+            return Mono.error(new IllegalArgumentException("Failed event cannot be null"));
+        }
+
+        Map<String, String> context = ReactiveUtils.createContext(
+                "eventId", event.getEventId(),
+                "correlationId", event.getCorrelationId(),
+                "orderId", event.getOrderId().toString(),
+                "reason", event.getReason()
+        );
+
+        return ReactiveUtils.withDiagnosticContext(context, () -> {
+            log.info("Publishing failure event for order {} with reason: {}",
+                    event.getOrderId(), event.getReason());
+
+            // MIGRACIÓN: Obtener el estado actual para determinar el topic adecuado usando OrderStateMachine
+            return findExistingOrder(event.getOrderId())
+                    .defaultIfEmpty(new Order(event.getOrderId(), OrderStatus.ORDER_UNKNOWN.getValue(), event.getCorrelationId()))
+                    .flatMap(existingOrder -> {
+                        // Determinar el topic adecuado usando OrderStateMachine
+                        String failureTopic = stateMachine.getTopicNameForTransition(
+                                existingOrder.status(), OrderStatus.ORDER_FAILED);
+
+                        if (failureTopic == null) {
+                            // Si no hay un topic específico, usamos el predeterminado
+                            failureTopic = EventTopics.ORDER_FAILED.getTopicName();
+                            log.warn("No topic defined for failure transition {} -> ORDER_FAILED, using default: {}",
+                                    existingOrder.status(), failureTopic);
+                        } else {
+                            log.debug("Using topic from state machine for {} -> ORDER_FAILED: {}",
+                                    existingOrder.status(), failureTopic);
+                        }
+
+                        return publishEvent(event, "failedEvent", failureTopic);
+                    })
+                    .onErrorResume(e -> {
+                        log.error("Failed to publish failure event: {}", e.getMessage(), e);
+                        // Crítico: no pudimos publicar evento de fallo
+                        meterRegistry.counter("saga.critical.publish_failed_event.error").increment();
+                        return Mono.empty(); // No propagamos el error para no bloquear compensación
+                    })
+                    .then();
+        });
     }
 }

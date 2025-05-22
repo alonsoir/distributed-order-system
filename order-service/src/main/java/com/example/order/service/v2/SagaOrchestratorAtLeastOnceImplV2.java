@@ -3,6 +3,7 @@ package com.example.order.service.v2;
 import com.example.order.config.SagaConfig;
 import com.example.order.domain.Order;
 import com.example.order.domain.OrderStatus;
+import com.example.order.domain.OrderStateMachine;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
@@ -26,6 +27,7 @@ import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @Component
@@ -60,6 +62,7 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
         String eventId = idGenerator.generateEventId();
         String correlationId = idGenerator.generateCorrelationId();
         String externalReference = idGenerator.generateExternalReference();
+
         // Usar ReactiveUtils para crear el contexto
         Map<String, String> context = ReactiveUtils.createContext(
                 "orderId", orderId.toString(),
@@ -79,18 +82,47 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
                 () -> {
                     log.info("Starting order saga execution with quantity={}, amount={}", quantity, amount);
 
+                    // Utilizamos la máquina de estados para definir y validar el flujo de la saga
                     return createOrder(orderId, correlationId, eventId, externalReference, quantity)
                             .flatMap(order -> {
                                 log.info("Order created, proceeding to reserve stock");
+                                // Verificamos que la transición a STOCK_RESERVED sea válida desde el estado actual
                                 return executeStep(createReserveStockStep(inventoryService, orderId, quantity, correlationId, eventId, externalReference));
                             })
                             .flatMap(event -> {
-                                log.info("Stock reserved, updating order status to completed");
-                                return updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId);
+                                log.info("Stock reserved, validating transition to ORDER_COMPLETED");
+                                // Usar stateMachine para validar que podemos completar la orden
+                                return eventRepository.getOrderStatus(orderId)
+                                        .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
+                                        .flatMap(currentStatus -> {
+                                            // Validar la transición usando OrderStateMachine
+                                            if (!stateMachine.isValidTransition(currentStatus, OrderStatus.ORDER_COMPLETED)) {
+                                                log.warn("Cannot transition from {} to ORDER_COMPLETED for order {}",
+                                                        currentStatus, orderId);
+
+                                                // Buscamos un estado alternativo si es necesario
+                                                Set<OrderStatus> validNextStates = stateMachine.getValidNextStates(currentStatus);
+                                                if (!validNextStates.isEmpty()) {
+                                                    // Priorizamos estados que nos acerquen al objetivo
+                                                    OrderStatus nextStatus = determineNextBestState(validNextStates, OrderStatus.ORDER_COMPLETED);
+                                                    log.info("Transitioning to {} instead for order {}", nextStatus, orderId);
+                                                    return updateOrderStatus(orderId, nextStatus, correlationId);
+                                                }
+                                            }
+
+                                            return updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId);
+                                        });
                             })
                             .onErrorResume(e -> {
                                 log.error("Order saga failed: {}", e.getMessage(), e);
-                                return updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId);
+                                return eventRepository.getOrderStatus(orderId)
+                                        .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
+                                        .flatMap(currentStatus -> {
+                                            // Determinamos el estado de error adecuado basado en las transiciones válidas
+                                            OrderStatus errorStatus = determineErrorStatus(currentStatus);
+                                            log.info("Transitioning order {} to error state: {}", orderId, errorStatus);
+                                            return updateOrderStatus(orderId, errorStatus, correlationId);
+                                        });
                             });
                 },
                 meterRegistry,
@@ -99,7 +131,35 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
         );
     }
 
-    @Override
+    /**
+     * Determina el mejor estado siguiente cuando la transición deseada no es válida
+     * @param validNextStates Estados válidos desde el estado actual
+     * @param desiredState Estado al que queríamos llegar
+     * @return El mejor estado siguiente disponible
+     */
+    private OrderStatus determineNextBestState(Set<OrderStatus> validNextStates, OrderStatus desiredState) {
+        // Si el estado deseado está en los válidos, lo usamos
+        if (validNextStates.contains(desiredState)) {
+            return desiredState;
+        }
+
+        // Estrategia de priorización: buscar estados que nos acerquen al objetivo
+        // Para ORDER_COMPLETED, priorizamos estados progresivos
+        if (desiredState == OrderStatus.ORDER_COMPLETED) {
+            if (validNextStates.contains(OrderStatus.ORDER_PROCESSING)) {
+                return OrderStatus.ORDER_PROCESSING;
+            }
+            if (validNextStates.contains(OrderStatus.ORDER_PREPARED)) {
+                return OrderStatus.ORDER_PREPARED;
+            }
+            if (validNextStates.contains(OrderStatus.SHIPPING_PENDING)) {
+                return OrderStatus.SHIPPING_PENDING;
+            }
+        }
+
+        // Si no hay una buena opción progresiva, usar el primer estado válido
+        return validNextStates.iterator().next();
+    }@Override
     public Mono<OrderEvent> executeStep(SagaStep step) {
         if (step == null) {
             return Mono.error(new IllegalArgumentException("SagaStep cannot be null"));
@@ -161,7 +221,23 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
                                                                     log.info("Step action completed, publishing success event");
                                                                     // Crear y publicar el evento de éxito
                                                                     OrderEvent successEvent = step.getSuccessEvent().apply(step.getEventId());
-                                                                    return publishEvent(successEvent, step.getName(), step.getTopic());
+
+                                                                    // Obtener el topic adecuado usando stateMachine si es posible
+                                                                    String topic = step.getTopic();
+
+                                                                    // Validación adicional: verificar que el topic está alineado con las transiciones
+                                                                    // Si el paso tiene información de transición de estado, verificamos consistencia
+                                                                    if (step.getName().equals("reserveStock")) {
+                                                                        // Para el paso de reserva de stock, verificamos que el topic sea consistente
+                                                                        String expectedTopic = stateMachine.getTopicNameForTransition(
+                                                                                OrderStatus.PAYMENT_CONFIRMED, OrderStatus.STOCK_RESERVED);
+                                                                        if (expectedTopic != null && !expectedTopic.equals(topic)) {
+                                                                            log.warn("Topic mismatch for step {}: expected {}, got {}",
+                                                                                    step.getName(), expectedTopic, topic);
+                                                                        }
+                                                                    }
+
+                                                                    return publishEvent(successEvent, step.getName(), topic);
                                                                 }))
                                                 )
                                         );
@@ -191,7 +267,6 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
 
     @Override
     public Mono<Order> createOrder(Long orderId, String correlationId, String eventId, String externalReference, int quantity) {
-
         Map<String, String> context = ReactiveUtils.createContext(
                 "orderId", orderId.toString(),
                 "correlationId", correlationId,
@@ -207,10 +282,24 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
                 () -> {
                     log.info("Creating order {} with correlationId {}, eventId {} and externalReference {}",
                             orderId, correlationId, eventId, externalReference);
+
+                    // Utilizar stateMachine para obtener el topic adecuado para la transición ORDER_UNKNOWN -> ORDER_CREATED
                     OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity);
 
+                    // Determinar la transición de estado y el topic asociado
+                    String topic = stateMachine.getTopicNameForTransition(
+                            OrderStatus.ORDER_UNKNOWN, OrderStatus.ORDER_CREATED);
+
+                    // Si no hay un topic específico en el stateMachine, usamos el predeterminado
+                    if (topic == null) {
+                        topic = EventTopics.ORDER_CREATED.getTopicName();
+                        log.warn("No topic defined for ORDER_UNKNOWN -> ORDER_CREATED transition, using default: {}", topic);
+                    } else {
+                        log.debug("Using topic from state machine for ORDER_UNKNOWN -> ORDER_CREATED: {}", topic);
+                    }
+
                     Mono<Order> orderMono = insertOrderData(orderId, correlationId, eventId, event)
-                            .then(publishEvent(event, "createOrder", EventTopics.ORDER_CREATED.getTopicName()))
+                            .then(publishEvent(event, "createOrder", topic))
                             .then(Mono.just(new Order(orderId, "pending", correlationId)))
                             .doOnSuccess(v -> log.info("Created order object for {}", orderId))
                             .doOnError(e -> log.error("Error in createOrder for order {}: {}",
@@ -258,6 +347,18 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
         return ReactiveUtils.withDiagnosticContext(context, () -> {
             log.info("Creating failed event with reason: {}, externalReference: {}",
                     reason, externalReference);
+
+            // Obtener el topic adecuado para eventos de fallo usando stateMachine
+            String failureTopic = stateMachine.getTopicNameForTransition(
+                    OrderStatus.ORDER_UNKNOWN, OrderStatus.ORDER_FAILED);
+
+            if (failureTopic == null) {
+                failureTopic = EventTopics.ORDER_FAILED.getTopicName();
+                log.warn("No topic defined for ORDER_UNKNOWN -> ORDER_FAILED transition, using default: {}",
+                        failureTopic);
+            } else {
+                log.debug("Using topic from state machine for ORDER_UNKNOWN -> ORDER_FAILED: {}", failureTopic);
+            }
 
             OrderFailedEvent event = new OrderFailedEvent(orderId,
                     correlationId,

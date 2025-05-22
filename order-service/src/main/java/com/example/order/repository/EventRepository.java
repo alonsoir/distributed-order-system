@@ -12,6 +12,10 @@ import reactor.core.publisher.Mono;
  */
 public interface EventRepository {
     /**
+     * Obtiene el estado actual de una orden
+     */
+    Mono<OrderStatus> getOrderStatus(Long orderId);
+    /**
      * Verifica si un evento ya ha sido procesado
      */
     Mono<Boolean> isEventProcessed(String eventId);
