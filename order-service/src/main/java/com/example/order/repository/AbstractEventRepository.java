@@ -1,5 +1,6 @@
 package com.example.order.repository;
 
+import com.example.order.config.MetricsConstants;
 import com.example.order.domain.DeliveryMode;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
@@ -36,11 +37,11 @@ public abstract class AbstractEventRepository implements EventRepository {
     protected static final Logger log = LoggerFactory.getLogger(AbstractEventRepository.class);
 
     // Configuraciones por defecto (pueden ser sobreescritas por propiedades)
-    protected static final int DEFAULT_MAX_RETRIES = 3;
-    protected static final Duration DEFAULT_RETRY_BACKOFF = Duration.ofMillis(100);
-    protected static final Duration DEFAULT_OPERATION_TIMEOUT = Duration.ofSeconds(5);
-    protected static final int DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 5;
-    protected static final Duration DEFAULT_CIRCUIT_BREAKER_WAIT_DURATION = Duration.ofSeconds(30);
+    protected static final int DEFAULT_MAX_RETRIES = MetricsConstants.DEFAULT_MAX_RETRIES;
+    protected static final Duration DEFAULT_RETRY_BACKOFF = MetricsConstants.DEFAULT_RETRY_BACKOFF;
+    protected static final Duration DEFAULT_OPERATION_TIMEOUT = MetricsConstants.DEFAULT_OPERATION_TIMEOUT;
+    protected static final int DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD = MetricsConstants.DEFAULT_CIRCUIT_BREAKER_FAILURE_THRESHOLD;
+    protected static final Duration DEFAULT_CIRCUIT_BREAKER_WAIT_DURATION = MetricsConstants.CIRCUIT_BREAKER_WAIT_DURATION;
 
     // Componentes para métricas y resiliencia
     protected final MeterRegistry meterRegistry;

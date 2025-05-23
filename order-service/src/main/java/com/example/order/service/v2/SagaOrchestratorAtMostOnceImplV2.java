@@ -1,6 +1,6 @@
 package com.example.order.service.v2;
 
-import com.example.order.config.SagaConfig;
+import com.example.order.config.MetricsConstants;
 import com.example.order.domain.Order;
 import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
@@ -239,7 +239,7 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                             });
                 },
                 meterRegistry,
-                SagaConfig.METRIC_SAGA_EXECUTION,
+                MetricsConstants.METRIC_SAGA_EXECUTION,
                 correlationTag
         );
     }
@@ -371,9 +371,10 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                                                 stateMachine.getTopicNameForTransition(
                                                         OrderStatus.ORDER_UNKNOWN, OrderStatus.ORDER_CREATED))
                                         .orElseGet(() -> {
+
                                             log.warn("No topic defined for ORDER_UNKNOWN -> ORDER_CREATED transition, using default: {}",
-                                                    EventTopics.ORDER_CREATED.getTopicName());
-                                            return EventTopics.ORDER_CREATED.getTopicName();
+                                                    EventTopics.getTopicName(OrderStatus.ORDER_CREATED));
+                                            return EventTopics.getTopicName(OrderStatus.ORDER_CREATED);
                                         });
 
                                 log.debug("Using topic for ORDER_UNKNOWN -> ORDER_CREATED: {}", topic);
@@ -403,7 +404,7 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                             });
                 },
                 meterRegistry,
-                SagaConfig.METRIC_ORDER_CREATION,
+                MetricsConstants.METRIC_ORDER_CREATION,
                 correlationTag
         );
     }
@@ -464,7 +465,7 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                                     .doOnSuccess(event -> {
                                         log.info("Step {} completed successfully for order {}",
                                                 step.getName(), step.getOrderId());
-                                        meterRegistry.counter(SagaConfig.COUNTER_SAGA_STEP_SUCCESS,
+                                        meterRegistry.counter(MetricsConstants.COUNTER_SAGA_STEP_SUCCESS,
                                                 "step", step.getName()).increment();
                                         stepTimer.stop(meterRegistry.timer("saga.step.execution.time",
                                                 "step", step.getName(),
@@ -473,7 +474,7 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                                     .doOnError(e -> {
                                         log.error("Step {} failed for order {}: {}",
                                                 step.getName(), step.getOrderId(), e.getMessage(), e);
-                                        meterRegistry.counter(SagaConfig.COUNTER_SAGA_STEP_FAILED,
+                                        meterRegistry.counter(MetricsConstants.COUNTER_SAGA_STEP_FAILED,
                                                 "step", step.getName()).increment();
                                         stepTimer.stop(meterRegistry.timer("saga.step.execution.time",
                                                 "step", step.getName(),
@@ -487,7 +488,7 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                             .onErrorResume(e -> handleStepError(step, e, compensationManager));
                 },
                 meterRegistry,
-                SagaConfig.METRIC_SAGA_STEP,
+                MetricsConstants.METRIC_SAGA_STEP,
                 stepTag
         );
     }
@@ -549,7 +550,7 @@ public class SagaOrchestratorAtMostOnceImplV2 extends RobustBaseSagaOrchestrator
                     OrderStatus.ORDER_UNKNOWN, OrderStatus.ORDER_FAILED);
 
             if (failureTopic == null) {
-                failureTopic = EventTopics.ORDER_FAILED.getTopicName();
+                failureTopic = EventTopics.getTopicName(OrderStatus.ORDER_FAILED);
                 log.warn("No topic defined for ORDER_UNKNOWN -> ORDER_FAILED transition, using default: {}",
                         failureTopic);
             } else {

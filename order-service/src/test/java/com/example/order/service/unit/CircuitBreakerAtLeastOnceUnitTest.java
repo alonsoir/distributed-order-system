@@ -1,6 +1,9 @@
 package com.example.order.service.unit;
 
+import com.example.order.config.CircuitBreakerConstants;
+import com.example.order.config.MetricsConstants;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.service.*;
 import com.example.order.service.v2.SagaOrchestratorAtLeastOnceImplV2;
@@ -79,20 +82,21 @@ class CircuitBreakerAtLeastOnceUnitTest {
         // Configuración de mocks común
         lenient().when(idGenerator.generateExternalReference()).thenReturn(TEST_EXTERNAL_REF);
         lenient().when(idGenerator.generateEventId()).thenReturn(TEST_EVENT_ID);
-        lenient().when(meterRegistry.counter("orders_success")).thenReturn(ordersSuccessCounter);
+        lenient().when(meterRegistry.counter(MetricsConstants.ORDERS_SUCCESS)).thenReturn(ordersSuccessCounter);
 
         // Este mock es esencial para varios tests
         lenient().when(sagaOrchestrator.createFailedEvent(anyString(), anyString()))
                 .thenReturn(Mono.empty());
     }
+
     @Test
     void shouldReturnFallbackWhenCircuitBreakerIsOpen() {
         // Arrange
-        when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
+        when(circuitBreakerRegistry.circuitBreaker(CircuitBreakerConstants.ORDER_PROCESSING)).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(false);
 
         // Este es el mock que falta - createFailedEvent debe devolver un Mono.empty()
-        when(sagaOrchestrator.createFailedEvent(eq("circuit_breaker_open"), eq(TEST_EXTERNAL_REF)))
+        when(sagaOrchestrator.createFailedEvent(eq(CircuitBreakerConstants.CIRCUIT_BREAKER_OPEN), eq(TEST_EXTERNAL_REF)))
                 .thenReturn(Mono.empty());
 
         // Act
@@ -100,23 +104,23 @@ class CircuitBreakerAtLeastOnceUnitTest {
 
         // Assert
         StepVerifier.create(result)
-                .expectNextMatches(order -> order.status().equals("failed"))
+                .expectNextMatches(order -> order.status().equals(OrderStatus.ORDER_FAILED))
                 .verifyComplete();
 
         verify(circuitBreaker).tryAcquirePermission();
-        verify(sagaOrchestrator).createFailedEvent(eq("circuit_breaker_open"), eq(TEST_EXTERNAL_REF));
+        verify(sagaOrchestrator).createFailedEvent(eq(CircuitBreakerConstants.CIRCUIT_BREAKER_OPEN), eq(TEST_EXTERNAL_REF));
         verify(sagaOrchestrator, never()).executeOrderSaga(anyInt(), anyDouble());
     }
 
     @Test
     void shouldApplyCircuitBreakerOnSuccessfulOrderProcessing() {
         // Arrange
-        Order expectedOrder = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
+        Order expectedOrder = new Order(TEST_ORDER_ID, OrderStatus.ORDER_COMPLETED, TEST_CORRELATION_ID);
 
         // Configurar un mock para este test
         CircuitBreaker testCircuitBreaker = mock(CircuitBreaker.class);
         when(testCircuitBreaker.tryAcquirePermission()).thenReturn(true);
-        when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(testCircuitBreaker);
+        when(circuitBreakerRegistry.circuitBreaker(CircuitBreakerConstants.ORDER_PROCESSING)).thenReturn(testCircuitBreaker);
 
         // Configurar el comportamiento de onSuccess
         doNothing().when(testCircuitBreaker).onSuccess(anyLong(), any(TimeUnit.class));
@@ -150,14 +154,14 @@ class CircuitBreakerAtLeastOnceUnitTest {
     @Test
     void shouldProcessOrderSuccessfullyWithCircuitBreakerAlwaysClosed() {
         // Arrange
-        Order expectedOrder = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
+        Order expectedOrder = new Order(TEST_ORDER_ID, OrderStatus.ORDER_COMPLETED, TEST_CORRELATION_ID);
 
         // Configurar CircuitBreaker
         CircuitBreaker simpleCircuitBreaker = mock(CircuitBreaker.class);
         when(simpleCircuitBreaker.tryAcquirePermission()).thenReturn(true);
         // Eliminamos la verificación de acquirePermission porque nunca se llama en el código real
         doNothing().when(simpleCircuitBreaker).onSuccess(anyLong(), any(TimeUnit.class));
-        when(circuitBreakerRegistry.circuitBreaker(anyString())).thenReturn(simpleCircuitBreaker);
+        when(circuitBreakerRegistry.circuitBreaker(CircuitBreakerConstants.ORDER_PROCESSING)).thenReturn(simpleCircuitBreaker);
 
         when(sagaOrchestrator.executeOrderSaga(anyInt(), anyDouble()))
                 .thenReturn(Mono.just(expectedOrder));
@@ -182,9 +186,9 @@ class CircuitBreakerAtLeastOnceUnitTest {
     @Test
     void shouldReturnFailedOrderWhenSagaFails() {
         // Arrange
-        Order failedOrder = new Order(TEST_ORDER_ID, "failed", TEST_CORRELATION_ID);
+        Order failedOrder = new Order(TEST_ORDER_ID, OrderStatus.ORDER_FAILED, TEST_CORRELATION_ID);
 
-        when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
+        when(circuitBreakerRegistry.circuitBreaker(CircuitBreakerConstants.ORDER_PROCESSING)).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
         // Eliminamos la verificación de acquirePermission
         doNothing().when(circuitBreaker).onError(anyLong(), any(TimeUnit.class), any(Throwable.class));
@@ -197,7 +201,7 @@ class CircuitBreakerAtLeastOnceUnitTest {
 
         // Mock para el createFailedEvent - esto es lo que se llama ahora
         // Cambiamos de global_timeout a circuit_breaker_error para reflejar el comportamiento real
-        when(sagaOrchestrator.createFailedEvent(eq("circuit_breaker_error"), eq(TEST_EXTERNAL_REF)))
+        when(sagaOrchestrator.createFailedEvent(eq(CircuitBreakerConstants.CIRCUIT_BREAKER_ERROR), eq(TEST_EXTERNAL_REF)))
                 .thenReturn(Mono.empty());
 
         // Act
@@ -205,7 +209,7 @@ class CircuitBreakerAtLeastOnceUnitTest {
 
         // Assert
         StepVerifier.create(result)
-                .expectNextMatches(order -> order.status().equals("failed"))
+                .expectNextMatches(order -> order.status().equals(OrderStatus.ORDER_FAILED))
                 .verifyComplete();
 
         verify(circuitBreaker).tryAcquirePermission();
@@ -213,7 +217,7 @@ class CircuitBreakerAtLeastOnceUnitTest {
         verify(circuitBreaker).onError(anyLong(), any(TimeUnit.class), any(Throwable.class));
 
         // Ahora verificamos createFailedEvent con el valor correcto
-        verify(sagaOrchestrator).createFailedEvent(eq("circuit_breaker_error"), eq(TEST_EXTERNAL_REF));
+        verify(sagaOrchestrator).createFailedEvent(eq(CircuitBreakerConstants.CIRCUIT_BREAKER_ERROR), eq(TEST_EXTERNAL_REF));
         verify(sagaOrchestrator, never()).publishFailedEvent(any(OrderFailedEvent.class));
     }
 

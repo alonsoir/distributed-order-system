@@ -1,7 +1,7 @@
 package com.example.order.resilience;
 
 import com.example.order.config.CircuitBreakerCategory;
-import com.example.order.config.SagaConfig;
+import com.example.order.config.MetricsConstants;
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadConfig;
 import io.github.resilience4j.bulkhead.BulkheadRegistry;
@@ -39,10 +39,10 @@ public class ResilienceManager {
         return circuitBreakerCache.computeIfAbsent(category.getName(), name -> {
             CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                     .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
-                    .slidingWindowSize(SagaConfig.CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE)
-                    .failureRateThreshold(SagaConfig.CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD)
-                    .waitDurationInOpenState(SagaConfig.CIRCUIT_BREAKER_WAIT_DURATION)
-                    .permittedNumberOfCallsInHalfOpenState(SagaConfig.CIRCUIT_BREAKER_PERMITTED_CALLS_IN_HALF_OPEN)
+                    .slidingWindowSize(MetricsConstants.CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE)
+                    .failureRateThreshold(MetricsConstants.CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD)
+                    .waitDurationInOpenState(MetricsConstants.CIRCUIT_BREAKER_WAIT_DURATION)
+                    .permittedNumberOfCallsInHalfOpenState(MetricsConstants.CIRCUIT_BREAKER_PERMITTED_CALLS_IN_HALF_OPEN)
                     .recordExceptions(Exception.class)
                     .build();
 
@@ -57,10 +57,10 @@ public class ResilienceManager {
         return circuitBreakerCache.computeIfAbsent(stepName, name -> {
             CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                     .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
-                    .slidingWindowSize(SagaConfig.CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE)
-                    .failureRateThreshold(SagaConfig.CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD)
-                    .waitDurationInOpenState(SagaConfig.CIRCUIT_BREAKER_WAIT_DURATION)
-                    .permittedNumberOfCallsInHalfOpenState(SagaConfig.CIRCUIT_BREAKER_PERMITTED_CALLS_IN_HALF_OPEN)
+                    .slidingWindowSize(MetricsConstants.CIRCUIT_BREAKER_SLIDING_WINDOW_SIZE)
+                    .failureRateThreshold(MetricsConstants.CIRCUIT_BREAKER_FAILURE_RATE_THRESHOLD)
+                    .waitDurationInOpenState(MetricsConstants.CIRCUIT_BREAKER_WAIT_DURATION)
+                    .permittedNumberOfCallsInHalfOpenState(MetricsConstants.CIRCUIT_BREAKER_PERMITTED_CALLS_IN_HALF_OPEN)
                     .recordExceptions(Exception.class)
                     .build();
 
@@ -74,8 +74,8 @@ public class ResilienceManager {
     public Bulkhead getBulkheadForStep(String stepName) {
         return bulkheadCache.computeIfAbsent(stepName, name -> {
             BulkheadConfig config = BulkheadConfig.custom()
-                    .maxConcurrentCalls(SagaConfig.BULKHEAD_MAX_CONCURRENT_CALLS)
-                    .maxWaitDuration(SagaConfig.BULKHEAD_MAX_WAIT_DURATION)
+                    .maxConcurrentCalls(MetricsConstants.BULKHEAD_MAX_CONCURRENT_CALLS)
+                    .maxWaitDuration(MetricsConstants.BULKHEAD_MAX_WAIT_DURATION)
                     .build();
 
             return bulkheadRegistry.bulkhead(name + "-bulkhead", config);

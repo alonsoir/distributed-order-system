@@ -1,9 +1,8 @@
 package com.example.order.service.v2;
 
 import com.example.order.config.CircuitBreakerCategory;
-import com.example.order.config.SagaConfig;
+import com.example.order.config.MetricsConstants;
 import com.example.order.domain.Order;
-import com.example.order.domain.DeliveryMode;
 import com.example.order.domain.OrderStateMachine;
 import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
@@ -157,7 +156,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
 
         // Si no hay un topic específico en el stateMachine, usamos el predeterminado
         if (topic == null) {
-            topic = EventTopics.STOCK_RESERVED.getTopicName();
+            topic = EventTopics.getTopicName(OrderStatus.STOCK_RESERVED);
             log.warn("No topic defined for PAYMENT_CONFIRMED -> STOCK_RESERVED transition, using default: {}", topic);
         } else {
             log.debug("Using topic from state machine for PAYMENT_CONFIRMED -> STOCK_RESERVED: {}", topic);
@@ -650,7 +649,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
                                     }));
                 },
                 meterRegistry,
-                SagaConfig.METRIC_EVENT_PUBLISH,
+                MetricsConstants.METRIC_EVENT_PUBLISH,
                 tags
         );
     }
@@ -692,8 +691,7 @@ public abstract class RobustBaseSagaOrchestratorV2 {
                                 existingOrder.status(), OrderStatus.ORDER_FAILED);
 
                         if (failureTopic == null) {
-                            // Si no hay un topic específico, usamos el predeterminado
-                            failureTopic = EventTopics.ORDER_FAILED.getTopicName();
+                            failureTopic = EventTopics.getTopicName(OrderStatus.ORDER_FAILED);
                             log.warn("No topic defined for failure transition {} -> ORDER_FAILED, using default: {}",
                                     existingOrder.status(), failureTopic);
                         } else {

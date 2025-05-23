@@ -1,6 +1,9 @@
 package com.example.order.service.unit;
 
+import com.example.order.config.CircuitBreakerConstants;
+import com.example.order.config.MetricsConstants;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.service.*;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -21,6 +24,7 @@ import reactor.test.StepVerifier;
 
 import java.util.stream.Stream;
 
+import static com.example.order.config.CircuitBreakerConstants.GLOBAL_TIMEOUT;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -65,9 +69,10 @@ class OrderServiceUnitTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
+
+        lenient().when(circuitBreakerRegistry.circuitBreaker(CircuitBreakerConstants.ORDER_PROCESSING)).thenReturn(circuitBreaker);
         lenient().when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
-        lenient().when(meterRegistry.counter("orders_success")).thenReturn(ordersSuccessCounter);
+        lenient().when(meterRegistry.counter(MetricsConstants.ORDERS_SUCCESS)).thenReturn(ordersSuccessCounter);
     }
 
     /**
@@ -76,7 +81,7 @@ class OrderServiceUnitTest {
     @Test
     void shouldProcessOrderSuccessfully() {
         // Arrange
-        Order expectedOrder = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
+        Order expectedOrder = new Order(TEST_ORDER_ID, OrderStatus.ORDER_COMPLETED, TEST_CORRELATION_ID);
 
         when(sagaOrchestrator.executeOrderSaga(TEST_QUANTITY, TEST_AMOUNT))
                 .thenReturn(Mono.just(expectedOrder));
@@ -126,10 +131,10 @@ class OrderServiceUnitTest {
     @Test
     void shouldHandleCircuitBreakerOpen() {
         // Arrange
-        Order fallbackOrder = new Order(null, "failed", TEST_EXTERNAL_REF);
-
+        Order fallbackOrder = new Order(null, OrderStatus.ORDER_FAILED, TEST_EXTERNAL_REF);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(false);
-        when(sagaOrchestrator.createFailedEvent(eq("circuit_breaker_open"), eq(TEST_EXTERNAL_REF)))
+        when(sagaOrchestrator.createFailedEvent(eq(CircuitBreakerConstants.CIRCUIT_BREAKER_OPEN),
+                                                eq(TEST_EXTERNAL_REF)))
                 .thenReturn(Mono.empty());
 
         // Act
@@ -138,11 +143,11 @@ class OrderServiceUnitTest {
         // Assert
         StepVerifier.create(result)
                 .expectNextMatches(order ->
-                        order.status().equals("failed") &&
+                        order.status().equals(OrderStatus.ORDER_FAILED) &&
                                 order.correlationId().equals(TEST_EXTERNAL_REF))
                 .verifyComplete();
 
-        verify(sagaOrchestrator).createFailedEvent(eq("circuit_breaker_open"), eq(TEST_EXTERNAL_REF));
+        verify(sagaOrchestrator).createFailedEvent(eq(CircuitBreakerConstants.CIRCUIT_BREAKER_OPEN), eq(TEST_EXTERNAL_REF));
         verify(sagaOrchestrator, never()).executeOrderSaga(anyInt(), anyDouble());
     }
 
@@ -154,10 +159,10 @@ class OrderServiceUnitTest {
         // Arrange
         System.out.println("Setting up timeout test");
 
-        Order failedOrder = new Order(null, "failed", TEST_EXTERNAL_REF);
+        Order failedOrder = new Order(null, OrderStatus.ORDER_FAILED, TEST_EXTERNAL_REF);
 
         // Mock the createFailedEvent to return empty mono
-        when(sagaOrchestrator.createFailedEvent(eq("global_timeout"), eq(TEST_EXTERNAL_REF)))
+        when(sagaOrchestrator.createFailedEvent(eq(GLOBAL_TIMEOUT), eq(TEST_EXTERNAL_REF)))
                 .thenReturn(Mono.empty());
 
         // This is the key change: Instead of making the saga take too long and then applying a timeout,
@@ -174,7 +179,7 @@ class OrderServiceUnitTest {
         StepVerifier.create(result)
                 .expectNextMatches(order -> {
                     System.out.println("Checking order: " + order);
-                    return order.status().equals("failed") &&
+                    return order.status().equals(OrderStatus.ORDER_FAILED) &&
                             order.correlationId().equals(TEST_EXTERNAL_REF);
                 })
                 .verifyComplete();
@@ -189,7 +194,7 @@ class OrderServiceUnitTest {
     @Test
     void shouldHandleCircuitBreakerError() {
         // Arrange
-        Order fallbackOrder = new Order(null, "failed", TEST_EXTERNAL_REF);
+        Order fallbackOrder = new Order(null, OrderStatus.ORDER_FAILED, TEST_EXTERNAL_REF);
 
         when(sagaOrchestrator.executeOrderSaga(TEST_QUANTITY, TEST_AMOUNT))
                 .thenReturn(Mono.error(new RuntimeException("Circuit breaker error")));
@@ -202,7 +207,7 @@ class OrderServiceUnitTest {
         // Assert
         StepVerifier.create(result)
                 .expectNextMatches(order ->
-                        order.status().equals("failed") &&
+                        order.status().equals(OrderStatus.ORDER_FAILED) &&
                                 order.correlationId().equals(TEST_EXTERNAL_REF))
                 .verifyComplete();
 

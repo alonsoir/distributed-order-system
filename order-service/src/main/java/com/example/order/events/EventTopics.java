@@ -6,81 +6,17 @@ import java.util.Arrays;
 import java.util.Optional;
 
 /**
- * Gestor unificado para los nombres de topics utilizados en el sistema de mensajería.
- * Proporciona una forma centralizada y tipo-segura de acceder a todos los topics,
- * incluyendo variantes para manejo de errores como DLQ, reintentos, auditoría, etc.
+ * Gestor unificado para los nombres de topics basado en OrderStatus.
+ * Elimina la duplicación y proporciona una forma centralizada y tipo-segura
+ * de acceder a todos los topics de eventos.
  */
-public enum EventTopics {
-    // Estados iniciales
-    ORDER_CREATED("order-created"),                     // Orden creada inicialmente
-    ORDER_VALIDATED("order-validated"),                 // Datos de la orden validados
-
-    // Estados de pago
-    PAYMENT_PENDING("payment-pending"),                 // Esperando confirmación de pago
-    PAYMENT_PROCESSING("payment-processing"),           // Procesando el pago
-    PAYMENT_CONFIRMED("payment-confirmed"),             // Pago confirmado
-    PAYMENT_DECLINED("payment-declined"),               // Pago rechazado
-
-    // Estados de inventario
-    STOCK_CHECKING("stock-checking"),                   // Verificando disponibilidad
-    STOCK_RESERVED("stock-reserved"),                   // Inventario reservado
-    STOCK_UNAVAILABLE("stock-unavailable"),             // Inventario no disponible
-
-    // Estados de preparación
-    ORDER_PENDING("order-pending"),                     // Orden pendiente de procesamiento
-    ORDER_PROCESSING("order-processing"),               // Orden en procesamiento
-    ORDER_PREPARED("order-prepared"),                   // Orden preparada para envío
-
-    // Estados de envío
-    SHIPPING_PENDING("shipping-pending"),               // Pendiente de envío
-    SHIPPING_ASSIGNED("shipping-assigned"),             // Servicio de envío asignado
-    SHIPPING_IN_PROGRESS("shipping-in-progress"),       // Envío en curso
-    SHIPPING_DELAYED("shipping-delayed"),               // Envío con retraso
-    SHIPPING_EXCEPTION("shipping-exception"),           // Problema durante el envío
-
-    // Estados de entrega
-    DELIVERED_TO_COURIER("delivered-to-courier"),       // Entregado al courier
-    OUT_FOR_DELIVERY("out-for-delivery"),               // En ruta final de entrega
-    DELIVERED("delivered"),                             // Entregado al cliente
-    DELIVERY_ATTEMPTED("delivery-attempted"),           // Intento de entrega fallido
-    DELIVERY_EXCEPTION("delivery-exception"),           // Problema durante la entrega
-
-    // Estados de recepción
-    PENDING_CONFIRMATION("pending-confirmation"),       // Pendiente confirmación del cliente
-    RECEIVED_CONFIRMED("received-confirmed"),           // Recepción confirmada por cliente
-
-    // Estados de devolución
-    RETURN_REQUESTED("return-requested"),               // Devolución solicitada
-    RETURN_APPROVED("return-approved"),                 // Devolución aprobada
-    RETURN_IN_TRANSIT("return-in-transit"),             // Devolución en tránsito
-    RETURN_RECEIVED("return-received"),                 // Devolución recibida
-    RETURN_REJECTED("return-rejected"),                 // Devolución rechazada
-
-    // Estados de compensación/reembolso
-    REFUND_PROCESSING("refund-processing"),             // Procesando reembolso
-    REFUND_COMPLETED("refund-completed"),               // Reembolso completado
-    ORDER_COMPENSATED("order-compensated"),             // Orden compensada (parcial/total)
-
-    // Estados técnicos y de sistema
-    SYSTEM_PROCESSING("system-processing"),             // Procesando en sistema
-    TECHNICAL_EXCEPTION("technical-exception"),         // Excepción técnica
-    WAITING_RETRY("waiting-retry"),                     // Esperando reintento
-    MANUAL_REVIEW("manual-review"),                     // Requiere revisión manual
-
-    // Estados terminales
-    ORDER_COMPLETED("order-completed"),                 // Orden completada satisfactoriamente
-    ORDER_CANCELED("order-canceled"),                   // Orden cancelada
-    ORDER_FAILED("order-failed"),                       // Orden fallida por error
-    ORDER_ABORTED("order-aborted"),                     // Orden abortada por sistema
-
-    // Estado especial
-    ORDER_UNKNOWN("order-unknown");                     // Estado desconocido
+public class EventTopics {
 
     /**
      * Tipos de topics especiales para manejo de errores y flujos alternativos
      */
     public enum TopicType {
-        NORMAL("."),          // Topic normal de procesamiento (sin sufijo)
+        NORMAL(""),           // Topic normal de procesamiento (sin sufijo)
         DLQ(".dlq"),          // Dead Letter Queue
         RETRY(".retry"),      // Topic para reintentos
         AUDIT(".audit"),      // Topic para auditoría
@@ -99,8 +35,6 @@ public enum EventTopics {
 
         /**
          * Determina el tipo de topic basado en el nombre
-         * @param topicName El nombre del topic a analizar
-         * @return El tipo de topic
          */
         public static TopicType fromTopicName(String topicName) {
             if (topicName == null) {
@@ -114,62 +48,82 @@ public enum EventTopics {
         }
     }
 
-    private final String topicName;
-
-    EventTopics(String topicName) {
-        this.topicName = topicName;
-    }
-
     /**
-     * Obtiene el nombre base del topic
-     * @return El nombre base del topic
+     * Convierte un OrderStatus a nombre de topic
+     * @param status El estado de la orden
+     * @return El nombre del topic correspondiente
      */
-    public String getTopicName() {
-        return topicName;
+    public static String getTopicName(OrderStatus status) {
+        if (status == null) {
+            throw new IllegalArgumentException("OrderStatus cannot be null");
+        }
+
+        // Convertir de UPPER_CASE a kebab-case
+        return status.name().toLowerCase().replace('_', '-');
     }
 
     /**
-     * Obtiene el nombre del topic para un tipo específico de manejo
+     * Obtiene el nombre del topic para un tipo específico
+     * @param status El estado de la orden
      * @param type El tipo de topic requerido
      * @return El nombre del topic del tipo especificado
      */
-    public String getTopicForType(TopicType type) {
+    public static String getTopicForType(OrderStatus status, TopicType type) {
+        String baseTopic = getTopicName(status);
+
         if (type == TopicType.NORMAL) {
-            return topicName;
+            return baseTopic;
         }
 
-        // Para otros tipos, agregamos el sufijo correspondiente
-        return topicName + type.getSuffix();
+        return baseTopic + type.getSuffix();
     }
 
     /**
-     * Obtiene el nombre de DLQ para este topic
-     * @return El nombre del topic de DLQ
+     * Obtiene el nombre de DLQ para un estado
      */
-    public String getDlqTopic() {
-        return getTopicForType(TopicType.DLQ);
+    public static String getDlqTopic(OrderStatus status) {
+        return getTopicForType(status, TopicType.DLQ);
     }
 
     /**
-     * Obtiene el nombre del topic de reintentos para este topic
-     * @return El nombre del topic de reintentos
+     * Obtiene el nombre del topic de reintentos para un estado
      */
-    public String getRetryTopic() {
-        return getTopicForType(TopicType.RETRY);
+    public static String getRetryTopic(OrderStatus status) {
+        return getTopicForType(status, TopicType.RETRY);
     }
 
     /**
-     * Obtiene el nombre del topic de auditoría para este topic
-     * @return El nombre del topic de auditoría
+     * Obtiene el nombre del topic de auditoría para un estado
      */
-    public String getAuditTopic() {
-        return getTopicForType(TopicType.AUDIT);
+    public static String getAuditTopic(OrderStatus status) {
+        return getTopicForType(status, TopicType.AUDIT);
+    }
+
+    /**
+     * Convierte un nombre de topic de vuelta a OrderStatus
+     * @param topicName El nombre del topic
+     * @return El OrderStatus correspondiente
+     */
+    public static Optional<OrderStatus> fromTopicName(String topicName) {
+        if (topicName == null) {
+            return Optional.empty();
+        }
+
+        // Extraer el topic base (sin sufijos como .dlq, .retry)
+        String baseTopic = extractBaseTopicName(topicName);
+
+        // Convertir de kebab-case a UPPER_CASE
+        String statusName = baseTopic.toUpperCase().replace('-', '_');
+
+        try {
+            return Optional.of(OrderStatus.valueOf(statusName));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
     }
 
     /**
      * Extrae el nombre del topic base a partir de un topic derivado
-     * @param derivedTopicName El nombre del topic derivado (DLQ, retry, etc.)
-     * @return El nombre del topic base
      */
     public static String extractBaseTopicName(String derivedTopicName) {
         TopicType type = TopicType.fromTopicName(derivedTopicName);
@@ -182,82 +136,7 @@ public enum EventTopics {
     }
 
     /**
-     * Busca un EventTopic a partir de un nombre exacto de topic base
-     * @param exactTopicName El nombre exacto del topic base
-     * @return El EventTopic correspondiente
-     * @throws IllegalArgumentException si no se encuentra un topic que coincida exactamente
-     */
-    public static EventTopics fromExactTopicName(String exactTopicName) {
-        return Arrays.stream(values())
-                .filter(topic -> topic.getTopicName().equals(exactTopicName))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("No matching event topic for: " + exactTopicName));
-    }
-
-    /**
-     * Busca un EventTopic a partir de un nombre de topic, incluso si es derivado (DLQ, retry, etc.)
-     * @param topicName El nombre del topic (normal o derivado)
-     * @return El EventTopic correspondiente
-     * @throws IllegalArgumentException si no se encuentra un topic que coincida
-     */
-    public static EventTopics fromAnyTopicName(String topicName) {
-        String baseTopic = extractBaseTopicName(topicName);
-        return fromExactTopicName(baseTopic);
-    }
-
-    /**
-     * Obtiene el EventTopic correspondiente a un OrderStatus
-     * @param status El estado de la orden
-     * @return El EventTopic correspondiente si existe, o Optional.empty() si no hay correspondencia
-     */
-    public static Optional<EventTopics> fromOrderStatus(OrderStatus status) {
-        if (status == null) {
-            return Optional.empty();
-        }
-
-        try {
-            return Optional.of(valueOf(status.name()));
-        } catch (IllegalArgumentException e) {
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * Obtiene el EventTopic correspondiente a un OrderStatus
-     * @param status El estado de la orden
-     * @return El EventTopic correspondiente
-     * @throws IllegalArgumentException si no hay un EventTopic correspondiente
-     */
-    public static EventTopics fromOrderStatusOrThrow(OrderStatus status) {
-        return fromOrderStatus(status)
-                .orElseThrow(() -> new IllegalArgumentException("No matching event topic for status: " + status));
-    }
-
-    /**
-     * Verifica si existe un EventTopic para el OrderStatus dado
-     * @param status El estado a verificar
-     * @return true si existe un topic correspondiente, false en caso contrario
-     */
-    public static boolean hasTopicForStatus(OrderStatus status) {
-        return fromOrderStatus(status).isPresent();
-    }
-
-    /**
-     * Intenta obtener el OrderStatus correspondiente a este EventTopic
-     * @return Optional con el OrderStatus correspondiente, o empty si no hay correspondencia
-     */
-    public Optional<OrderStatus> toOrderStatus() {
-        try {
-            return Optional.of(OrderStatus.valueOf(this.name()));
-        } catch (IllegalArgumentException e) {
-            return Optional.empty();
-        }
-    }
-
-    /**
      * Verifica si un nombre de topic es un topic de DLQ
-     * @param topicName El nombre del topic a verificar
-     * @return true si es un topic de DLQ, false en caso contrario
      */
     public static boolean isDlqTopic(String topicName) {
         return TopicType.fromTopicName(topicName) == TopicType.DLQ;
@@ -265,39 +144,44 @@ public enum EventTopics {
 
     /**
      * Verifica si un nombre de topic es un topic de reintentos
-     * @param topicName El nombre del topic a verificar
-     * @return true si es un topic de reintentos, false en caso contrario
      */
     public static boolean isRetryTopic(String topicName) {
         return TopicType.fromTopicName(topicName) == TopicType.RETRY;
     }
 
     /**
-     * Obtiene todos los nombres de topics para todos los tipos definidos
-     * @return Un array con todos los nombres de topics posibles
+     * Obtiene todos los nombres de topics normales
      */
     public static String[] getAllTopicNames() {
-        return Arrays.stream(values())
+        return Arrays.stream(OrderStatus.values())
                 .map(EventTopics::getTopicName)
                 .toArray(String[]::new);
     }
 
     /**
      * Obtiene todos los nombres de topics para un tipo específico
-     * @param type El tipo de topics a obtener
-     * @return Un array con todos los nombres de topics del tipo especificado
      */
     public static String[] getTopicNamesByType(TopicType type) {
-        return Arrays.stream(values())
-                .map(topic -> topic.getTopicForType(type))
+        return Arrays.stream(OrderStatus.values())
+                .map(status -> getTopicForType(status, type))
                 .toArray(String[]::new);
     }
 
     /**
      * Obtiene todos los nombres de topics de DLQ
-     * @return Un array con todos los nombres de topics de DLQ
      */
     public static String[] getAllDlqTopicNames() {
         return getTopicNamesByType(TopicType.DLQ);
+    }
+
+    // Métodos de conveniencia para estados comunes
+    public static final class Common {
+        public static final String ORDER_CREATED = getTopicName(OrderStatus.ORDER_CREATED);
+        public static final String ORDER_FAILED = getTopicName(OrderStatus.ORDER_FAILED);
+        public static final String ORDER_COMPLETED = getTopicName(OrderStatus.ORDER_COMPLETED);
+        public static final String STOCK_RESERVED = getTopicName(OrderStatus.STOCK_RESERVED);
+        public static final String PAYMENT_CONFIRMED = getTopicName(OrderStatus.PAYMENT_CONFIRMED);
+        public static final String ORDER_PROCESSING = getTopicName(OrderStatus.ORDER_PROCESSING);
+        public static final String TECHNICAL_EXCEPTION = getTopicName(OrderStatus.TECHNICAL_EXCEPTION);
     }
 }

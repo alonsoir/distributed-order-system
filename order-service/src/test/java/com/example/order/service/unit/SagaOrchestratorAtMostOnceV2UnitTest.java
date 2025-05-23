@@ -145,7 +145,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         verify(eventPublisher).publishEvent(
                 eventCaptor.capture(),
                 eq("createOrder"),
-                eq(EventTopics.ORDER_CREATED.getTopicName()));
+                eq(EventTopics.getTopicName(OrderStatus.ORDER_CREATED)));
 
         OrderEvent capturedEvent = eventCaptor.getValue();
         assertEquals(OrderCreatedEvent.class, capturedEvent.getClass());
@@ -234,7 +234,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         verify(eventPublisher).publishEvent(
                 eq(failedEvent),
                 eq("failedEvent"),
-                eq(EventTopics.ORDER_FAILED.getTopicName()));
+                eq(EventTopics.getTopicName(OrderStatus.ORDER_FAILED)));
 
         // Verificar interacción con EventRepository
         verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
@@ -276,7 +276,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         verify(eventPublisher).publishEvent(
                 any(OrderFailedEvent.class),
                 eq("failedEvent"),
-                eq(EventTopics.ORDER_FAILED.getTopicName()));
+                eq(EventTopics.getTopicName(OrderStatus.ORDER_FAILED)));
 
         // Verificar interacción con EventRepository
         verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
@@ -586,7 +586,8 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
 
         String usedTopic = topicCaptor.getValue();
         // Debería ser el topic de ORDER_CREATED
-        assertEquals(EventTopics.ORDER_CREATED.getTopicName(), usedTopic);
+
+        assertEquals(EventTopics.getTopicName(OrderStatus.ORDER_CREATED), usedTopic);
     }
 
     @Test
@@ -607,6 +608,6 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
 
         String usedTopic = topicCaptor.getValue();
         // Debería ser el topic de ORDER_FAILED
-        assertEquals(EventTopics.ORDER_FAILED.getTopicName(), usedTopic);
+        assertEquals(EventTopics.getTopicName(OrderStatus.ORDER_FAILED), usedTopic);
     }
 }

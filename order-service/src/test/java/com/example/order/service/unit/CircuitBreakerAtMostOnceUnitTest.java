@@ -1,6 +1,7 @@
 package com.example.order.service.unit;
 
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStatus;
 import com.example.order.events.OrderFailedEvent;
 import com.example.order.service.*;
 import com.example.order.service.v2.SagaOrchestratorAtMostOnceImplV2;
@@ -102,9 +103,9 @@ class CircuitBreakerAtMostOnceUnitTest {
         // Act
         Mono<Order> result = orderService.processOrder(TEST_EXTERNAL_REF, TEST_QUANTITY, TEST_AMOUNT);
 
-        // Assert
+        // Assert - CORRECCIÓN: Usar OrderStatus.ORDER_FAILED.getValue()
         StepVerifier.create(result)
-                .expectNextMatches(order -> order.status().equals("failed"))
+                .expectNextMatches(order -> order.status().equals(OrderStatus.ORDER_FAILED))
                 .verifyComplete();
 
         verify(circuitBreaker).tryAcquirePermission();
@@ -114,8 +115,8 @@ class CircuitBreakerAtMostOnceUnitTest {
 
     @Test
     void shouldApplyCircuitBreakerOnSuccessfulOrderProcessing() {
-        // Arrange
-        Order expectedOrder = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
+        // Arrange - CORRECCIÓN: Usar OrderStatus.ORDER_COMPLETED.getValue()
+        Order expectedOrder = new Order(TEST_ORDER_ID, OrderStatus.ORDER_COMPLETED.getValue(), TEST_CORRELATION_ID);
 
         // Configurar un mock para este test
         CircuitBreaker testCircuitBreaker = mock(CircuitBreaker.class);
@@ -153,8 +154,8 @@ class CircuitBreakerAtMostOnceUnitTest {
 
     @Test
     void shouldProcessOrderSuccessfullyWithCircuitBreakerAlwaysClosed() {
-        // Arrange
-        Order expectedOrder = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
+        // Arrange - CORRECCIÓN: Usar OrderStatus.ORDER_COMPLETED.getValue()
+        Order expectedOrder = new Order(TEST_ORDER_ID, OrderStatus.ORDER_COMPLETED.getValue(), TEST_CORRELATION_ID);
 
         // Configurar CircuitBreaker
         CircuitBreaker simpleCircuitBreaker = mock(CircuitBreaker.class);
@@ -185,8 +186,8 @@ class CircuitBreakerAtMostOnceUnitTest {
 
     @Test
     void shouldReturnFailedOrderWhenSagaFails() {
-        // Arrange
-        Order failedOrder = new Order(TEST_ORDER_ID, "failed", TEST_CORRELATION_ID);
+        // Arrange - NO NECESITA CORRECCIÓN porque aquí no creamos Order directamente
+        // El Order se crea internamente en createFailedOrder()
 
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);
         when(circuitBreaker.tryAcquirePermission()).thenReturn(true);
@@ -207,9 +208,9 @@ class CircuitBreakerAtMostOnceUnitTest {
         // Act
         Mono<Order> result = orderService.processOrder(TEST_EXTERNAL_REF, TEST_QUANTITY, TEST_AMOUNT);
 
-        // Assert
+        // Assert - CORRECCIÓN: Usar OrderStatus.ORDER_FAILED.getValue()
         StepVerifier.create(result)
-                .expectNextMatches(order -> order.status().equals("failed"))
+                .expectNextMatches(order -> order.status().equals(OrderStatus.ORDER_FAILED))
                 .verifyComplete();
 
         verify(circuitBreaker).tryAcquirePermission();
@@ -224,8 +225,8 @@ class CircuitBreakerAtMostOnceUnitTest {
     // Test adicional para validar características específicas de la implementación AT MOST ONCE
     @Test
     void shouldHandleIdempotencyWhenEventAlreadyProcessed() {
-        // Arrange
-        Order existingOrder = new Order(TEST_ORDER_ID, "completed", TEST_CORRELATION_ID);
+        // Arrange - CORRECCIÓN: Usar OrderStatus.ORDER_COMPLETED.getValue()
+        Order existingOrder = new Order(TEST_ORDER_ID, OrderStatus.ORDER_COMPLETED.getValue(), TEST_CORRELATION_ID);
 
         // Configurar CircuitBreaker
         when(circuitBreakerRegistry.circuitBreaker("orderProcessing")).thenReturn(circuitBreaker);

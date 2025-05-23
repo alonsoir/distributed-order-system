@@ -1,5 +1,6 @@
 package com.example.order.service;
 
+import com.example.order.config.CircuitBreakerConstants;
 import com.example.order.domain.Order;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -27,7 +28,7 @@ public class OrderServiceAtLeastOnceImpl extends AbstractOrderService implements
                 externalReference, quantity, amount);
 
         return validateOrderParams(externalReference, quantity, amount)
-                .then(getCircuitBreaker("orderProcessing"))
+                .then(getCircuitBreaker(CircuitBreakerConstants.ORDER_PROCESSING))
                 .flatMap(circuitBreaker ->
                         executeOrderSaga(quantity, amount)
                                 .doOnSuccess(order -> recordSuccess(circuitBreaker, order))
@@ -41,7 +42,7 @@ public class OrderServiceAtLeastOnceImpl extends AbstractOrderService implements
                 .onErrorResume(e -> {
                     // Handle the case where getCircuitBreaker throws an error
                     if (e instanceof RuntimeException && "Circuit breaker open".equals(e.getMessage())) {
-                        return createFailedOrder("circuit_breaker_open", externalReference);
+                        return createFailedOrder(CircuitBreakerConstants.CIRCUIT_BREAKER_OPEN, externalReference);
                     }
                     return Mono.error(e);
                 });
