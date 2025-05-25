@@ -1,5 +1,7 @@
 package com.example.order.config;
 
+import com.example.order.repository.base.SecurityUtils;
+import com.example.order.repository.base.ValidationUtils;
 import io.r2dbc.spi.ConnectionFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,5 +20,15 @@ public class DatabaseConfig {
     @Bean
     public TransactionalOperator r2dbcTransactionalOperator(ReactiveTransactionManager transactionManager) {
         return TransactionalOperator.create(transactionManager);
+    }
+
+    @Bean
+    public SecurityUtils securityUtils() {
+        return new SecurityUtils();
+    }
+
+    @Bean
+    public ValidationUtils validationUtils() {
+        return new ValidationUtils();
     }
 }

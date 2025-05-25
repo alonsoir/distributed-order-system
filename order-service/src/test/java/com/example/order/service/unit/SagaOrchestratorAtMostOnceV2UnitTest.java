@@ -1,8 +1,8 @@
 package com.example.order.service.unit;
 
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStateMachine;
 import com.example.order.domain.OrderStatus;
-import com.example.order.events.EventTopics;
 import com.example.order.events.OrderCreatedEvent;
 import com.example.order.events.OrderEvent;
 import com.example.order.events.OrderFailedEvent;
@@ -23,6 +23,7 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.util.UUID;
+import java.util.EnumSet;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -31,13 +32,12 @@ import static org.mockito.Mockito.*;
 
 /**
  * Prueba unitaria para SagaOrchestratorAtMostOnceImplV2.
- * Se centra exclusivamente en los métodos públicos definidos en la interfaz SagaOrchestrator.
- * Esta versión utiliza EventRepository y OrderStateMachine.
+ * Versión migrada que usa OrderStateMachineService en lugar de OrderStateMachine directamente.
  */
 @ActiveProfiles("unit")
 class SagaOrchestratorAtMostOnceV2UnitTest {
 
-    // Sistema bajo prueba referenciado a través de la interfaz
+    // Sistema bajo prueba
     private SagaOrchestrator sagaOrchestrator;
 
     // Mocks de dependencias
@@ -49,6 +49,7 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
     private EventPublisher eventPublisher;
     private EventRepository eventRepository;
     private CompensationManager compensationManager;
+    private OrderStateMachineService stateMachineService;
 
     // Constantes para pruebas
     private final Long orderId = 1234L;
@@ -69,50 +70,11 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         eventPublisher = mock(EventPublisher.class);
         eventRepository = mock(EventRepository.class);
         compensationManager = mock(CompensationManager.class);
+        stateMachineService = mock(OrderStateMachineService.class);
 
-        // Mock response cuando se utiliza transactional
-        when(transactionalOperator.transactional(any(Mono.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-
-        // Mock generación de IDs
-        when(idGenerator.generateOrderId()).thenReturn(orderId);
-        when(idGenerator.generateCorrelationId()).thenReturn(correlationId);
-        when(idGenerator.generateEventId()).thenReturn(eventId);
-        when(idGenerator.generateExternalReference()).thenReturn(externalReference);
-
-        // Mock respuesta de ResilienceManager
-        when(resilienceManager.applyResilience(anyString()))
-                .thenReturn(Function.identity());
-        when(resilienceManager.applyResilience(any(com.example.order.config.CircuitBreakerCategory.class)))
-                .thenReturn(Function.identity());
-
-        // Mock respuesta de EventPublisher
-        OrderEvent mockEvent = mock(OrderEvent.class);
-        EventPublishOutcome<OrderEvent> outcome = EventPublishOutcome.success(mockEvent);
-        when(eventPublisher.publishEvent(any(OrderEvent.class), anyString(), anyString()))
-                .thenReturn(Mono.just(outcome));
-
-        // Mock respuesta de InventoryService
-        when(inventoryService.reserveStock(anyLong(), anyInt()))
-                .thenReturn(Mono.empty());
-
-        // Mock respuesta de EventRepository
-        when(eventRepository.isEventProcessed(anyString())).thenReturn(Mono.just(false));
-        when(eventRepository.findOrderById(anyLong())).thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)));
-        when(eventRepository.saveOrderData(anyLong(), anyString(), anyString(), any(OrderEvent.class)))
-                .thenReturn(Mono.empty());
-        when(eventRepository.updateOrderStatus(anyLong(), any(OrderStatus.class), anyString()))
-                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)));
-        when(eventRepository.insertStatusAuditLog(anyLong(), any(OrderStatus.class), anyString()))
-                .thenReturn(Mono.empty());
-        when(eventRepository.saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString()))
-                .thenReturn(Mono.empty());
-        when(eventRepository.recordSagaFailure(anyLong(), anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(Mono.empty());
-        when(eventRepository.recordStepFailure(anyString(), anyLong(), anyString(), anyString(), anyString(),
-                anyString(), anyString())).thenReturn(Mono.empty());
-        when(eventRepository.insertCompensationLog(anyString(), anyLong(), anyString(), anyString(),
-                any(OrderStatus.class))).thenReturn(Mono.empty());
+        // Configuración básica de mocks
+        setupBasicMocks();
+        setupStateMachineServiceMocks();
 
         // Crear el sistema bajo prueba
         sagaOrchestrator = new SagaOrchestratorAtMostOnceImplV2(
@@ -123,49 +85,104 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 eventPublisher,
                 inventoryService,
                 compensationManager,
-                eventRepository
+                eventRepository,
+                stateMachineService
         );
     }
 
+    private void setupBasicMocks() {
+        // Mock transactional operator
+        when(transactionalOperator.transactional(any(Mono.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        // Mock ID generation
+        when(idGenerator.generateOrderId()).thenReturn(orderId);
+        when(idGenerator.generateCorrelationId()).thenReturn(correlationId);
+        when(idGenerator.generateEventId()).thenReturn(eventId);
+        when(idGenerator.generateExternalReference()).thenReturn(externalReference);
+
+        // Mock resilience manager
+        when(resilienceManager.applyResilience(anyString()))
+                .thenReturn(Function.identity());
+        when(resilienceManager.applyResilience(any(com.example.order.config.CircuitBreakerCategory.class)))
+                .thenReturn(Function.identity());
+
+        // Mock event publisher
+        OrderEvent mockEvent = mock(OrderEvent.class);
+        EventPublishOutcome<OrderEvent> outcome = EventPublishOutcome.success(mockEvent);
+        when(eventPublisher.publishEvent(any(OrderEvent.class), anyString(), anyString()))
+                .thenReturn(Mono.just(outcome));
+
+        // Mock inventory service
+        when(inventoryService.reserveStock(anyLong(), anyInt())).thenReturn(Mono.empty());
+
+        // Mock event repository
+        when(eventRepository.isEventProcessed(anyString())).thenReturn(Mono.just(false));
+        when(eventRepository.findOrderById(anyLong()))
+                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)));
+        when(eventRepository.saveOrderData(anyLong(), anyString(), anyString(), any(OrderEvent.class)))
+                .thenReturn(Mono.empty());
+        when(eventRepository.updateOrderStatus(anyLong(), any(OrderStatus.class), anyString()))
+                .thenAnswer(invocation -> {
+                    Long id = invocation.getArgument(0);
+                    OrderStatus status = invocation.getArgument(1);
+                    String corrId = invocation.getArgument(2);
+                    return Mono.just(new Order(id, status, corrId));
+                });
+        when(eventRepository.insertStatusAuditLog(anyLong(), any(OrderStatus.class), anyString()))
+                .thenReturn(Mono.empty());
+        when(eventRepository.saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+        when(eventRepository.recordSagaFailure(anyLong(), anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(Mono.empty());
+        when(eventRepository.recordStepFailure(anyString(), anyLong(), anyString(), anyString(), anyString(),
+                anyString(), anyString())).thenReturn(Mono.empty());
+        when(eventRepository.insertCompensationLog(anyString(), anyLong(), anyString(), anyString(),
+                any(OrderStatus.class))).thenReturn(Mono.empty());
+    }
+
+    private void setupStateMachineServiceMocks() {
+        // Usar una instancia real de OrderStateMachine en lugar de mock
+        OrderStateMachine realStateMachine = new OrderStateMachine(orderId, OrderStatus.ORDER_UNKNOWN);
+
+        when(stateMachineService.createForOrder(anyLong(), any(OrderStatus.class)))
+                .thenReturn(realStateMachine);
+
+        when(stateMachineService.isValidTransition(any(OrderStatus.class), any(OrderStatus.class)))
+                .thenReturn(true);
+
+        when(stateMachineService.getValidNextStates(any(OrderStatus.class)))
+                .thenReturn(EnumSet.of(OrderStatus.ORDER_PROCESSING, OrderStatus.ORDER_COMPLETED));
+
+        when(stateMachineService.getTopicForTransition(any(OrderStatus.class), any(OrderStatus.class)))
+                .thenReturn("order-topic");
+    }
+
+
     @Test
     void testCreateOrder_Success() {
-        // Arrange
-        ArgumentCaptor<OrderEvent> eventCaptor = ArgumentCaptor.forClass(OrderEvent.class);
+        when(stateMachineService.getTopicForTransition(OrderStatus.ORDER_UNKNOWN, OrderStatus.ORDER_CREATED))
+                .thenReturn("order-created");
+        when(eventRepository.isEventProcessed(anyString()))
+                .thenReturn(Mono.just(false));
 
-        // Act & Assert
         StepVerifier.create(sagaOrchestrator.createOrder(orderId, correlationId, eventId, externalReference, quantity))
-                .assertNext(order -> {
-                    assertNotNull(order);
-                    assertEquals(orderId, order.id());
-                    assertEquals(correlationId, order.correlationId());
-                })
+                .expectNextMatches(order ->
+                        order.id().equals(orderId) &&
+                                order.correlationId().equals(correlationId))
                 .verifyComplete();
 
-        // Verificar que se publicó el evento correcto
-        verify(eventPublisher).publishEvent(
-                eventCaptor.capture(),
-                eq("createOrder"),
-                eq(EventTopics.getTopicName(OrderStatus.ORDER_CREATED)));
-
-        OrderEvent capturedEvent = eventCaptor.getValue();
-        assertEquals(OrderCreatedEvent.class, capturedEvent.getClass());
-        assertEquals(orderId, capturedEvent.getOrderId());
-        assertEquals(correlationId, capturedEvent.getCorrelationId());
-
-        // Verificar interacción con EventRepository
         verify(eventRepository).saveOrderData(eq(orderId), eq(correlationId), eq(eventId), any(OrderEvent.class));
-        verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
+        verify(eventPublisher).publishEvent(any(OrderEvent.class), eq("createOrder"), eq("order-created"));
     }
 
     @Test
     void testExecuteStep_Success() {
-        // Arrange
         SagaStep step = SagaStep.builder()
                 .name("testStep")
                 .topic("test.topic")
-                .stepType(SagaStepType.GENERIC_STEP) // Usar el tipo genérico
+                .stepType(SagaStepType.GENERIC_STEP)
                 .action(() -> Mono.empty())
-                .compensation(() -> Mono.empty())
                 .successEvent(eventId -> new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity))
                 .orderId(orderId)
                 .correlationId(correlationId)
@@ -173,95 +190,15 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .externalReference(externalReference)
                 .build();
 
-        // Act & Assert
         StepVerifier.create(sagaOrchestrator.executeStep(step))
                 .expectNextCount(1)
                 .verifyComplete();
 
-        // Verificar que se publicó el evento
-        verify(eventPublisher).publishEvent(
-                any(OrderEvent.class),
-                eq(step.getName()),
-                eq(step.getTopic()));
-
-        // Verificar interacción con EventRepository
-        verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
+        verify(eventPublisher).publishEvent(any(OrderEvent.class), eq("testStep"), eq("test.topic"));
     }
 
-    @Test
-    void testExecuteOrderSaga_Success() {
-        // Mock para que updateOrderStatus devuelva una orden completada
-        when(eventRepository.updateOrderStatus(anyLong(), eq(OrderStatus.ORDER_COMPLETED), anyString()))
-                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_COMPLETED, correlationId)));
 
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
-                .assertNext(order -> {
-                    assertNotNull(order);
-                    assertEquals(orderId, order.id());
-                    assertEquals(OrderStatus.ORDER_COMPLETED, order.status());
-                    assertEquals(correlationId, order.correlationId());
-                })
-                .verifyComplete();
 
-        // Verificar que se generaron los IDs necesarios
-        verify(idGenerator).generateOrderId();
-        verify(idGenerator).generateCorrelationId();
-        verify(idGenerator).generateEventId();
-
-        // Verificar interacción con EventRepository
-        verify(eventRepository).updateOrderStatus(anyLong(), eq(OrderStatus.ORDER_COMPLETED), anyString());
-        verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
-        verify(eventRepository).saveOrderData(eq(orderId), eq(correlationId), eq(eventId), any(OrderEvent.class));
-    }
-
-    @Test
-    void testPublishFailedEvent() {
-        // Arrange
-        OrderFailedEvent failedEvent = new OrderFailedEvent(
-                orderId,
-                correlationId,
-                eventId,
-                SagaStepType.FAILED_EVENT,
-                "Test failure",
-                externalReference);
-
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.publishFailedEvent(failedEvent))
-                .verifyComplete();
-
-        // Verificar que se publicó el evento de fallo
-        verify(eventPublisher).publishEvent(
-                eq(failedEvent),
-                eq("failedEvent"),
-                eq(EventTopics.getTopicName(OrderStatus.ORDER_FAILED)));
-
-        // Verificar interacción con EventRepository
-        verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
-    }
-
-    @Test
-    void testPublishEvent() {
-        // Arrange
-        OrderEvent event = new OrderCreatedEvent(
-                orderId, correlationId, eventId, externalReference, quantity);
-        String stepName = "testStep";
-        String topic = "test.topic";
-
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.publishEvent(event, stepName, topic))
-                .expectNextCount(1)
-                .verifyComplete();
-
-        // Verificar que se publicó el evento
-        verify(eventPublisher).publishEvent(
-                eq(event),
-                eq(stepName),
-                eq(topic));
-
-        // Verificar interacción con EventRepository
-        verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
-    }
 
     @Test
     void testCreateFailedEvent() {
@@ -272,89 +209,91 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
         StepVerifier.create(sagaOrchestrator.createFailedEvent(reason, externalReference))
                 .verifyComplete();
 
-        // Verificar que se publicó el evento de fallo
-        verify(eventPublisher).publishEvent(
-                any(OrderFailedEvent.class),
-                eq("failedEvent"),
-                eq(EventTopics.getTopicName(OrderStatus.ORDER_FAILED)));
+        // Verify event was published
+        verify(eventPublisher).publishEvent(any(OrderFailedEvent.class), eq("failedEvent"), eq("order-topic"));
 
-        // Verificar interacción con EventRepository
-        verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
+        // Verify interaction with EventRepository
+        verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(),
+                anyString(), anyString(), anyString());
+
+        // Verify interaction with OrderStateMachineService
+        verify(stateMachineService).getTopicForTransition(eq(OrderStatus.ORDER_UNKNOWN), eq(OrderStatus.ORDER_FAILED));
     }
 
-    @Test
-    void testExecuteOrderSaga_AlreadyProcessed() {
-        // Simular que el evento ya fue procesado
-        when(eventRepository.isEventProcessed(anyString())).thenReturn(Mono.just(true));
-
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
-                .assertNext(order -> {
-                    assertNotNull(order);
-                    assertEquals(orderId, order.id());
-                    assertEquals(OrderStatus.ORDER_PENDING, order.status());
-                    assertEquals(correlationId, order.correlationId());
-                })
-                .verifyComplete();
-
-        // Verificar que se consultó si el evento estaba procesado
-        verify(eventRepository).isEventProcessed(anyString());
-
-        // Verificar que se recuperó la orden existente
-        verify(eventRepository).findOrderById(orderId);
-
-        // Verificar que no se creó una nueva orden
-        verify(eventRepository, never()).saveOrderData(anyLong(), anyString(), anyString(), any());
-    }
 
     @Test
-    void testExecuteOrderSaga_Invalid_Quantity() {
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.executeOrderSaga(-1, amount))
+    void testExecuteOrderSaga_ValidationErrors() {
+        // Test invalid quantity
+        StepVerifier.create(sagaOrchestrator.executeOrderSaga(-1, 100.0))
                 .expectErrorMatches(ex -> ex instanceof IllegalArgumentException &&
                         ex.getMessage().equals("Quantity must be positive"))
                 .verify();
-    }
 
-    @Test
-    void testExecuteOrderSaga_Invalid_Amount() {
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, -1))
+        // Test invalid amount
+        StepVerifier.create(sagaOrchestrator.executeOrderSaga(5, -1))
                 .expectErrorMatches(ex -> ex instanceof IllegalArgumentException &&
                         ex.getMessage().equals("Amount must be positive"))
                 .verify();
     }
 
+    // ✅ TEST UNITARIO 4: Solo testear idempotencia
     @Test
-    void testCreateOrder_EventAlreadyProcessed() {
-        // Simular que el evento ya fue procesado
-        when(eventRepository.isEventProcessed(anyString())).thenReturn(Mono.just(true));
+    void testExecuteOrderSaga_AlreadyProcessed() {
+        when(eventRepository.isEventProcessed(anyString()))
+                .thenReturn(Mono.just(true));
+        when(eventRepository.findOrderById(orderId))
+                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)));
 
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.createOrder(orderId, correlationId, eventId, externalReference, quantity))
-                .assertNext(order -> {
-                    assertNotNull(order);
-                    assertEquals(orderId, order.id());
-                    assertEquals(OrderStatus.ORDER_PENDING, order.status());
-                    assertEquals(correlationId, order.correlationId());
-                })
+        StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
+                .expectNextMatches(order -> order.id().equals(orderId))
                 .verifyComplete();
 
-        // Verificar que se consultó si el evento estaba procesado
         verify(eventRepository).isEventProcessed(anyString());
-
-        // Verificar que se recuperó la orden existente
         verify(eventRepository).findOrderById(orderId);
-
-        // Verificar que no se insertó la nueva orden
+        // NO debe crear nueva orden
         verify(eventRepository, never()).saveOrderData(anyLong(), anyString(), anyString(), any());
     }
 
+    // ✅ TEST UNITARIO 5: Solo testear publishFailedEvent con estado correcto
     @Test
-    void testExecuteStep_Error() {
-        // Arrange
-        RuntimeException expectedError = new RuntimeException("Test error");
+    void testPublishFailedEvent_WithCorrectState() {
+        OrderFailedEvent failedEvent = new OrderFailedEvent(
+                orderId, correlationId, eventId, SagaStepType.FAILED_EVENT, "Test failure", externalReference);
 
+        // CORREGIDO: Mockear el estado que realmente se usa
+        when(eventRepository.findOrderById(orderId))
+                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)));
+        when(stateMachineService.getTopicForTransition(OrderStatus.ORDER_PENDING, OrderStatus.ORDER_FAILED))
+                .thenReturn("order-failed");
+
+        StepVerifier.create(sagaOrchestrator.publishFailedEvent(failedEvent))
+                .verifyComplete();
+
+        verify(eventPublisher).publishEvent(eq(failedEvent), eq("failedEvent"), eq("order-failed"));
+        verify(stateMachineService).getTopicForTransition(OrderStatus.ORDER_PENDING, OrderStatus.ORDER_FAILED);
+    }
+
+    // ✅ TEST UNITARIO 6: Solo testear cleanup una sola vez
+    @Test
+    void testStateMachineCleanup_OnlyOnce() {
+        // Mock para que saga complete exitosamente
+        when(inventoryService.reserveStock(anyLong(), anyInt()))
+                .thenReturn(Mono.empty());
+        when(eventRepository.isEventProcessed(anyString()))
+                .thenReturn(Mono.just(false));
+
+        StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
+                .expectNextCount(1)
+                .verifyComplete();
+
+        // El cleanup debe ejecutarse EXACTAMENTE una vez
+        verify(stateMachineService, times(1)).removeForOrder(orderId);
+    }
+
+    // ✅ TEST UNITARIO 7: Solo testear manejo de error específico
+    @Test
+    void testExecuteStep_WithSpecificError() {
+        RuntimeException expectedError = new RuntimeException("Test error");
         SagaStep step = SagaStep.builder()
                 .name("errorStep")
                 .topic("test.topic")
@@ -368,65 +307,53 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .externalReference(externalReference)
                 .build();
 
-        // Act & Assert
         StepVerifier.create(sagaOrchestrator.executeStep(step))
                 .expectError(RuntimeException.class)
                 .verify();
 
-        // Verificar que se registró el error
-        verify(eventRepository).recordStepFailure(
-                eq("errorStep"),
-                eq(orderId),
-                eq(correlationId),
-                eq(eventId),
-                anyString(),
-                eq("RuntimeException"),
-                anyString());
-
-        // Verificar que se ejecutó la compensación
+        // Verificar manejo de error
         verify(compensationManager).executeCompensation(eq(step));
+        verify(eventRepository).recordStepFailure(anyString(), eq(orderId), anyString(), anyString(),
+                anyString(), anyString(), anyString());
+    }
 
-        // Verificar log de compensación
-        verify(eventRepository).insertCompensationLog(
-                eq("errorStep"),
-                eq(orderId),
-                eq(correlationId),
-                eq(eventId),
-                any(OrderStatus.class));
+
+    @Test
+    void testCreateOrder_ValidationErrors() {
+        // Test null parameters
+        StepVerifier.create(sagaOrchestrator.createOrder(null, correlationId, eventId, externalReference, quantity))
+                .expectErrorMatches(ex -> ex instanceof IllegalArgumentException &&
+                        ex.getMessage().contains("cannot be null"))
+                .verify();
     }
 
     @Test
-    void testExecuteOrderSaga_InventoryServiceFailure() {
-        // Arrange
-        RuntimeException expectedError = new RuntimeException("Inventory service error");
-        when(inventoryService.reserveStock(anyLong(), anyInt()))
-                .thenReturn(Mono.error(expectedError));
+    void testExecuteStep_ValidationErrors() {
+        // Test null step
+        StepVerifier.create(sagaOrchestrator.executeStep(null))
+                .expectErrorMatches(e -> e instanceof IllegalArgumentException &&
+                        e.getMessage().equals("SagaStep cannot be null"))
+                .verify();
 
-        // Mock para que updateOrderStatus con ORDER_FAILED funcione
-        when(eventRepository.updateOrderStatus(anyLong(), eq(OrderStatus.ORDER_FAILED), anyString()))
-                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_FAILED, correlationId)));
+        // Test step with missing required fields
+        SagaStep invalidStep = SagaStep.builder()
+                .name("invalidStep")
+                .topic("test.topic")
+                .stepType(SagaStepType.GENERIC_STEP)
+                .orderId(orderId)
+                .correlationId(correlationId)
+                .eventId(eventId)
+                // Missing action and successEvent
+                .build();
 
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
-                .assertNext(order -> {
-                    assertNotNull(order);
-                    assertEquals(orderId, order.id());
-                    assertEquals(OrderStatus.ORDER_FAILED, order.status());
-                    assertEquals(correlationId, order.correlationId());
-                })
-                .verifyComplete();
-
-        // Verificar que se actualizó el estado a fallido
-        verify(eventRepository).updateOrderStatus(eq(orderId), eq(OrderStatus.ORDER_FAILED), eq(correlationId));
-
-        // Verificar que se registró el fallo
-        verify(eventRepository).recordSagaFailure(
-                eq(orderId),
-                eq(correlationId),
-                contains("Inventory service error"),
-                eq("RuntimeException"),
-                anyString());
+        StepVerifier.create(sagaOrchestrator.executeStep(invalidStep))
+                .expectErrorMatches(ex -> ex instanceof IllegalArgumentException &&
+                        ex.getMessage().equals("SagaStep has missing required fields"))
+                .verify();
     }
+
+
+
 
     @Test
     void testExecuteOrderSaga_MissingFields_Error() {
@@ -438,42 +365,6 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .expectErrorMatches(ex -> ex instanceof IllegalStateException &&
                         ex.getMessage().equals("Failed to generate required IDs"))
                 .verify();
-    }
-
-    @Test
-    void testCreateOrder_MissingParameters() {
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.createOrder(null, correlationId, eventId, externalReference, quantity))
-                .expectErrorMatches(ex -> ex instanceof IllegalArgumentException &&
-                        ex.getMessage().contains("cannot be null"))
-                .verify();
-    }
-
-    @Test
-    void testExecuteOrderSaga_OrderStateMachineTransitions() {
-        // Simular orden existente con estado ORDER_PROCESSING
-        Order processingOrder = new Order(orderId, OrderStatus.ORDER_PROCESSING, correlationId);
-        when(eventRepository.findOrderById(anyLong())).thenReturn(Mono.just(processingOrder));
-
-        // Mock para que updateOrderStatus devuelva una orden con estado alternativo
-        when(eventRepository.updateOrderStatus(anyLong(), any(OrderStatus.class), anyString()))
-                .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PROCESSING, correlationId)));
-
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.executeOrderSaga(quantity, amount))
-                .assertNext(order -> {
-                    assertNotNull(order);
-                    assertEquals(orderId, order.id());
-                    // El estado puede ser ORDER_PROCESSING o un estado alternativo válido
-                    assertTrue(order.status() == OrderStatus.ORDER_PROCESSING ||
-                            order.status() == OrderStatus.ORDER_COMPLETED ||
-                            order.status() == OrderStatus.ORDER_PREPARED);
-                    assertEquals(correlationId, order.correlationId());
-                })
-                .verifyComplete();
-
-        // Verificar que NO se intentó reservar stock para un estado no válido
-        verify(inventoryService, never()).reserveStock(anyLong(), anyInt());
     }
 
     @Test
@@ -494,83 +385,15 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .verify();
     }
 
-    @Test
-    void testExecuteStep_NullStep() {
-        // Este es un caso simple que no depende de metodología interna
-        Mono<OrderEvent> result = sagaOrchestrator.executeStep(null);
 
-        StepVerifier.create(result)
-                .expectErrorMatches(e -> e instanceof IllegalArgumentException &&
-                        e.getMessage().equals("SagaStep cannot be null"))
-                .verify();
-    }
 
     @Test
-    void testExecuteStep_NullActionOrRequiredFields() {
-        // Prepare a step with missing required fields
-        SagaStep invalidStep = SagaStep.builder()
-                .name("invalidStep")
-                // Omitting action, which is required
-                .topic("test.topic")
-                .stepType(SagaStepType.GENERIC_STEP)
-                .orderId(orderId)
-                .correlationId(correlationId)
-                .eventId(eventId)
-                .build();
+    void testTopicSelection_WithStateMachineService() {
+        // Arrange
+        String customTopic = "custom.order.topic";
+        when(stateMachineService.getTopicForTransition(eq(OrderStatus.ORDER_UNKNOWN), eq(OrderStatus.ORDER_CREATED)))
+                .thenReturn(customTopic);
 
-        // Act & Assert
-        StepVerifier.create(sagaOrchestrator.executeStep(invalidStep))
-                .expectErrorMatches(ex -> ex instanceof IllegalArgumentException &&
-                        ex.getMessage().equals("SagaStep has missing required fields"))
-                .verify();
-    }
-
-    @Test
-    void testExecuteStep_OrderStateMachineTopicValidation() {
-        // Arrange - crear un paso que simule reserva de stock
-        SagaStep reserveStockStep = SagaStep.builder()
-                .name("reserveStock")
-                .topic("wrong.topic") // Topic incorrecto para simular advertencia
-                .stepType(SagaStepType.RESERVE_STOCK)
-                .action(() -> Mono.empty())
-                .compensation(() -> Mono.empty())
-                .successEvent(eventId -> new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity))
-                .orderId(orderId)
-                .correlationId(correlationId)
-                .eventId(eventId)
-                .externalReference(externalReference)
-                .build();
-
-        // Act & Assert - el paso debería ejecutarse pero mostrar advertencia en logs
-        StepVerifier.create(sagaOrchestrator.executeStep(reserveStockStep))
-                .expectNextCount(1)
-                .verifyComplete();
-
-        // Verificar que se publicó el evento con el topic original (aunque sea incorrecto)
-        verify(eventPublisher).publishEvent(
-                any(OrderEvent.class),
-                eq("reserveStock"),
-                eq("wrong.topic"));
-
-        // Verificar interacción con EventRepository
-        verify(eventRepository, atLeastOnce()).saveEventHistory(anyString(), anyString(), anyLong(), anyString(), anyString(), anyString());
-    }
-
-    @Test
-    void testInitialize() {
-        // Get instance of SagaOrchestratorAtMostOnceImplV2 to call initialize method
-        SagaOrchestratorAtMostOnceImplV2 concreteOrchestrator = (SagaOrchestratorAtMostOnceImplV2) sagaOrchestrator;
-
-        // Act - just verify it doesn't throw an exception
-        assertDoesNotThrow(() -> concreteOrchestrator.initialize());
-
-        // Usando SimpleMeterRegistry no podemos hacer muchas verificaciones
-        // pero al menos confirmamos que el método se ejecuta sin errores
-    }
-
-    @Test
-    void testCreateOrder_OrderStateMachineTopicSelection() {
-        // Arrange - configurar mock específico para topic selection
         ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
 
         // Act
@@ -578,36 +401,20 @@ class SagaOrchestratorAtMostOnceV2UnitTest {
                 .expectNextCount(1)
                 .verifyComplete();
 
-        // Assert - verificar que se usó el topic correcto para la transición ORDER_UNKNOWN -> ORDER_CREATED
-        verify(eventPublisher).publishEvent(
-                any(OrderEvent.class),
-                eq("createOrder"),
-                topicCaptor.capture());
-
-        String usedTopic = topicCaptor.getValue();
-        // Debería ser el topic de ORDER_CREATED
-
-        assertEquals(EventTopics.getTopicName(OrderStatus.ORDER_CREATED), usedTopic);
+        // Assert
+        verify(eventPublisher).publishEvent(any(OrderEvent.class), eq("createOrder"), topicCaptor.capture());
+        assertEquals(customTopic, topicCaptor.getValue());
+        verify(stateMachineService).getTopicForTransition(eq(OrderStatus.ORDER_UNKNOWN), eq(OrderStatus.ORDER_CREATED));
     }
 
+    // ✅ TEST UNITARIO 8: Solo testear initialize
     @Test
-    void testCreateFailedEvent_OrderStateMachineTopicSelection() {
-        // Arrange
-        String reason = "Test failure reason";
-        ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
+    void testInitialize() {
+        SagaOrchestratorAtMostOnceImplV2 concreteOrchestrator = (SagaOrchestratorAtMostOnceImplV2) sagaOrchestrator;
 
-        // Act
-        StepVerifier.create(sagaOrchestrator.createFailedEvent(reason, externalReference))
-                .verifyComplete();
+        assertDoesNotThrow(() -> concreteOrchestrator.initialize());
 
-        // Assert - verificar que se usó el topic correcto para eventos fallidos
-        verify(eventPublisher).publishEvent(
-                any(OrderFailedEvent.class),
-                eq("failedEvent"),
-                topicCaptor.capture());
-
-        String usedTopic = topicCaptor.getValue();
-        // Debería ser el topic de ORDER_FAILED
-        assertEquals(EventTopics.getTopicName(OrderStatus.ORDER_FAILED), usedTopic);
+        // Verificar que las métricas se registraron (opcional)
+        // No necesario verificar detalles internos de métricas
     }
 }

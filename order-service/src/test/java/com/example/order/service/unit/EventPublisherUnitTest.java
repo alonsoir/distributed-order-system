@@ -21,6 +21,7 @@ import org.slf4j.MDC;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.data.redis.core.ReactiveStreamOperations;
 import org.springframework.r2dbc.core.DatabaseClient;
+import org.springframework.test.context.ActiveProfiles;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -44,6 +45,8 @@ import static org.mockito.Mockito.*;
  * configurar cómo se registran estas excepciones.
  */
 @ExtendWith(MockitoExtension.class)
+@ActiveProfiles("unit")
+
 class EventPublisherUnitTest {
 
     @Mock

@@ -27,7 +27,9 @@ public abstract class BaseSagaOrchestratorV2 {
     protected final ResilienceManager resilienceManager;
     protected final EventPublisher eventPublisher;
     protected final EventRepository eventRepository;
-    protected final OrderStateMachine stateMachine;
+
+    // MIGRACIÓN: Cambiar de OrderStateMachine a OrderStateMachineService
+    protected final OrderStateMachineService stateMachineService;
 
     public BaseSagaOrchestratorV2(
             TransactionalOperator transactionalOperator,
@@ -35,14 +37,15 @@ public abstract class BaseSagaOrchestratorV2 {
             IdGenerator idGenerator,
             ResilienceManager resilienceManager,
             EventPublisher eventPublisher,
-            EventRepository eventRepository) {
+            EventRepository eventRepository,
+            OrderStateMachineService stateMachineService) { // ✅ Cambio aquí
         this.transactionalOperator = transactionalOperator;
         this.meterRegistry = meterRegistry;
         this.idGenerator = idGenerator;
         this.resilienceManager = resilienceManager;
         this.eventPublisher = eventPublisher;
         this.eventRepository = eventRepository;
-        this.stateMachine = OrderStateMachine.getInstance(); // Usar el singleton
+        this.stateMachineService = stateMachineService; // ✅ Usar servicio
     }
 
     /**
@@ -66,23 +69,31 @@ public abstract class BaseSagaOrchestratorV2 {
     }
 
     /**
-     * Publica un evento de fallo
+     * Publica un evento de fallo usando OrderStateMachineService
      */
     protected Mono<Void> publishFailedEvent(OrderFailedEvent event) {
         log.info("Publishing failure event for order {} with reason: {}",
                 event.getOrderId(), event.getReason());
 
-        // Determinar el topic adecuado para el evento de fallo
-        String topic = stateMachine.getTopicNameForTransition(
-                OrderStatus.ORDER_CREATED, OrderStatus.ORDER_FAILED);
+        // MIGRACIÓN: Usar OrderStateMachineService para obtener el estado actual
+        return eventRepository.getOrderStatus(event.getOrderId())
+                .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
+                .flatMap(currentStatus -> {
+                    // Determinar el topic adecuado usando OrderStateMachineService
+                    String topic = stateMachineService.getTopicForTransition(
+                            currentStatus, OrderStatus.ORDER_FAILED);
 
-        if (topic == null) {
-            topic = EventTopics.getTopicName(OrderStatus.ORDER_FAILED);
-            log.warn("No topic defined for failure transition {} -> {}, using default: {}",
-                    OrderStatus.ORDER_CREATED, OrderStatus.ORDER_FAILED, topic);
-        }
+                    if (topic == null) {
+                        topic = EventTopics.getTopicName(OrderStatus.ORDER_FAILED);
+                        log.warn("No topic defined for failure transition {} -> ORDER_FAILED, using default: {}",
+                                currentStatus, topic);
+                    } else {
+                        log.debug("Using topic from state machine for {} -> ORDER_FAILED: {}",
+                                currentStatus, topic);
+                    }
 
-        return publishEvent(event, "failedEvent", topic)
+                    return publishEvent(event, "failedEvent", topic);
+                })
                 .then();
     }
 
@@ -114,19 +125,19 @@ public abstract class BaseSagaOrchestratorV2 {
     }
 
     /**
-     * Actualiza el estado de una orden
+     * Actualiza el estado de una orden usando OrderStateMachineService
      */
     protected Mono<Order> updateOrderStatus(Long orderId, OrderStatus newStatus, String correlationId) {
         return eventRepository.getOrderStatus(orderId)
                 .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
                 .flatMap(currentStatus -> {
-                    // Validar la transición usando la máquina de estados
-                    if (!stateMachine.isValidTransition(currentStatus, newStatus)) {
+                    // MIGRACIÓN: Validar la transición usando OrderStateMachineService
+                    if (!stateMachineService.isValidTransition(currentStatus, newStatus)) {
                         log.warn("Invalid state transition from {} to {} for order {}",
                                 currentStatus, newStatus, orderId);
 
                         // Buscar un estado alternativo válido
-                        Set<OrderStatus> validNextStates = stateMachine.getValidNextStates(currentStatus);
+                        Set<OrderStatus> validNextStates = stateMachineService.getValidNextStates(currentStatus);
                         if (!validNextStates.isEmpty()) {
                             OrderStatus alternativeStatus = determineAlternativeStatus(validNextStates, newStatus);
                             log.info("Transitioning to {} instead for order {}", alternativeStatus, orderId);
@@ -146,7 +157,7 @@ public abstract class BaseSagaOrchestratorV2 {
     /**
      * Determina un estado alternativo cuando la transición deseada no es válida
      */
-    private OrderStatus determineAlternativeStatus(Set<OrderStatus> validStates, OrderStatus desiredStatus) {
+    protected OrderStatus determineAlternativeStatus(Set<OrderStatus> validStates, OrderStatus desiredStatus) {
         // Si el estado deseado está disponible, usarlo
         if (validStates.contains(desiredStatus)) {
             return desiredStatus;
@@ -169,10 +180,10 @@ public abstract class BaseSagaOrchestratorV2 {
     }
 
     /**
-     * Determina el estado de error apropiado basado en el estado actual
+     * Determina el estado de error apropiado basado en el estado actual usando OrderStateMachineService
      */
     protected OrderStatus determineErrorStatus(OrderStatus currentStatus) {
-        Set<OrderStatus> validNextStates = stateMachine.getValidNextStates(currentStatus);
+        Set<OrderStatus> validNextStates = stateMachineService.getValidNextStates(currentStatus);
 
         // Priorizar estados de error específicos
         if (validNextStates.contains(OrderStatus.ORDER_FAILED)) {
@@ -187,6 +198,133 @@ public abstract class BaseSagaOrchestratorV2 {
 
         // Si no hay estados de error válidos, usar TECHNICAL_EXCEPTION como fallback
         return OrderStatus.TECHNICAL_EXCEPTION;
+    }
+
+    /**
+     * MIGRACIÓN: Determina el mejor estado de finalización basado en el estado actual
+     */
+    protected OrderStatus determineBestCompletionStatus(OrderStatus currentStatus) {
+        // Si ya está en un estado avanzado, mantenerlo
+        if (currentStatus == OrderStatus.DELIVERED ||
+                currentStatus == OrderStatus.RECEIVED_CONFIRMED) {
+            return OrderStatus.ORDER_COMPLETED;
+        }
+
+        // Para estados intermedios, buscar progresión natural
+        Set<OrderStatus> validNextStates = stateMachineService.getValidNextStates(currentStatus);
+
+        if (validNextStates.contains(OrderStatus.ORDER_COMPLETED)) {
+            return OrderStatus.ORDER_COMPLETED;
+        }
+
+        // Estados progresivos en orden de preferencia
+        if (validNextStates.contains(OrderStatus.ORDER_PROCESSING)) {
+            return OrderStatus.ORDER_PROCESSING;
+        }
+        if (validNextStates.contains(OrderStatus.ORDER_PREPARED)) {
+            return OrderStatus.ORDER_PREPARED;
+        }
+        if (validNextStates.contains(OrderStatus.SHIPPING_PENDING)) {
+            return OrderStatus.SHIPPING_PENDING;
+        }
+
+        // Si no hay buena opción, mantener el estado actual
+        return currentStatus;
+    }
+
+    /**
+     * MIGRACIÓN: Determina el mejor estado siguiente cuando la transición deseada no es válida
+     */
+    protected OrderStatus determineNextBestState(Set<OrderStatus> validNextStates, OrderStatus desiredState) {
+        // Si el estado deseado está en los válidos, lo usamos
+        if (validNextStates.contains(desiredState)) {
+            return desiredState;
+        }
+
+        // Estrategia de priorización: buscar estados que nos acerquen al objetivo
+        if (desiredState == OrderStatus.ORDER_COMPLETED) {
+            if (validNextStates.contains(OrderStatus.ORDER_PROCESSING)) {
+                return OrderStatus.ORDER_PROCESSING;
+            }
+            if (validNextStates.contains(OrderStatus.ORDER_PREPARED)) {
+                return OrderStatus.ORDER_PREPARED;
+            }
+            if (validNextStates.contains(OrderStatus.SHIPPING_PENDING)) {
+                return OrderStatus.SHIPPING_PENDING;
+            }
+        }
+
+        // Si no hay una buena opción progresiva, usar el primer estado válido
+        return validNextStates.iterator().next();
+    }
+
+    /**
+     * MIGRACIÓN: Método para completar la orden de forma segura, manejando transiciones de estado
+     */
+    protected Mono<Order> completeOrderSafely(Long orderId, String correlationId) {
+        return eventRepository.getOrderStatus(orderId)
+                .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
+                .flatMap(currentStatus -> {
+                    log.debug("Current order status: {} for order {}", currentStatus, orderId);
+
+                    // Determinar el mejor estado de finalización basado en el estado actual
+                    OrderStatus targetStatus = determineBestCompletionStatus(currentStatus);
+
+                    if (stateMachineService.isValidTransition(currentStatus, targetStatus)) {
+                        log.info("Transitioning order {} from {} to {}", orderId, currentStatus, targetStatus);
+                        return updateOrderStatus(orderId, targetStatus, correlationId);
+                    } else {
+                        log.warn("Cannot transition from {} to {} for order {}", currentStatus, targetStatus, orderId);
+
+                        // Buscar estados alternativos progresivos
+                        Set<OrderStatus> validNextStates = stateMachineService.getValidNextStates(currentStatus);
+                        if (!validNextStates.isEmpty()) {
+                            OrderStatus nextStatus = determineNextBestState(validNextStates, targetStatus);
+                            log.info("Transitioning to {} instead for order {}", nextStatus, orderId);
+                            return updateOrderStatus(orderId, nextStatus, correlationId);
+                        } else {
+                            log.warn("No valid transitions available from {}, keeping current status", currentStatus);
+                            return Mono.just(new Order(orderId, currentStatus, correlationId));
+                        }
+                    }
+                });
+    }
+
+    /**
+     * MIGRACIÓN: Maneja errores en la saga de forma centralizada
+     */
+    protected Mono<Order> handleSagaError(Long orderId, String correlationId, Throwable error) {
+        return eventRepository.getOrderStatus(orderId)
+                .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
+                .flatMap(currentStatus -> {
+                    OrderStatus errorStatus = determineErrorStatus(currentStatus);
+                    log.info("Transitioning order {} to error state: {}", orderId, errorStatus);
+                    return updateOrderStatus(orderId, errorStatus, correlationId);
+                })
+                .onErrorResume(updateError -> {
+                    log.error("Failed to update order status during error handling: {}", updateError.getMessage());
+                    // Retornar orden con estado de error técnico como fallback
+                    return Mono.just(new Order(orderId, OrderStatus.TECHNICAL_EXCEPTION, correlationId));
+                });
+    }
+
+    /**
+     * MIGRACIÓN: Determina el topic apropiado para un paso usando OrderStateMachineService
+     */
+    protected String determineStepTopic(SagaStep step) {
+        String topic = step.getTopic();
+
+        // Validación adicional para pasos específicos
+        if ("reserveStock".equals(step.getName())) {
+            String expectedTopic = stateMachineService.getTopicForTransition(
+                    OrderStatus.PAYMENT_CONFIRMED, OrderStatus.STOCK_RESERVED);
+            if (expectedTopic != null && !expectedTopic.equals(topic)) {
+                log.warn("Topic mismatch for step {}: expected {}, got {}",
+                        step.getName(), expectedTopic, topic);
+            }
+        }
+
+        return topic;
     }
 
     /**
@@ -225,8 +363,8 @@ public abstract class BaseSagaOrchestratorV2 {
                             step.getExternalReference()
                     );
 
-                    // Determinar el topic para el evento de fallo
-                    String failureTopic = stateMachine.getTopicNameForTransition(currentStatus, errorStatus);
+                    // MIGRACIÓN: Determinar el topic para el evento de fallo usando OrderStateMachineService
+                    String failureTopic = stateMachineService.getTopicForTransition(currentStatus, errorStatus);
                     if (failureTopic == null) {
                         failureTopic = EventTopics.getTopicName(OrderStatus.TECHNICAL_EXCEPTION);
                         log.warn("No topic defined for failure transition {} -> {}, using default: {}",
@@ -269,24 +407,36 @@ public abstract class BaseSagaOrchestratorV2 {
     }
 
     /**
-     * NUEVO: Crea un paso para reservar stock
+     * MIGRACIÓN: Crea un paso para reservar stock usando OrderStateMachineService
      */
     protected SagaStep createReserveStockStep(InventoryService inventoryService, Long orderId,
                                               int quantity, String correlationId, String eventId, String externalReference) {
+
+        // MIGRACIÓN: Usar OrderStateMachineService para obtener el topic
+        String topic = stateMachineService.getTopicForTransition(
+                OrderStatus.PAYMENT_CONFIRMED, OrderStatus.STOCK_RESERVED);
+
+        if (topic == null) {
+            topic = EventTopics.getTopicName(OrderStatus.STOCK_RESERVED);
+            log.warn("No topic defined for PAYMENT_CONFIRMED -> STOCK_RESERVED transition, using default: {}", topic);
+        } else {
+            log.debug("Using topic from state machine for PAYMENT_CONFIRMED -> STOCK_RESERVED: {}", topic);
+        }
+
         return SagaStep.builder()
                 .name("reserveStock")
                 .orderId(orderId)
                 .correlationId(correlationId)
                 .eventId(eventId)
                 .externalReference(externalReference)
-                .topic("stock-reserved")
+                .topic(topic) // ✅ Usar topic del servicio
                 .action(() -> inventoryService.reserveStock(orderId, quantity))
                 .successEvent(evtId ->
                         new com.example.order.events.StockReservedEvent(orderId,
-                                                                        correlationId,
-                                                                        evtId,
-                                                                        externalReference,
-                                                                        quantity))
+                                correlationId,
+                                evtId,
+                                externalReference,
+                                quantity))
                 .stepType(com.example.order.model.SagaStepType.PROCESS_ORDER)
                 .build();
     }

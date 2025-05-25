@@ -1,6 +1,5 @@
 package com.example.order.domain;
 
-import com.example.order.domain.OrderStatus;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
@@ -11,28 +10,57 @@ import java.util.EnumSet;
 @Slf4j
 public class OrderStateMachine {
 
-    private static volatile OrderStateMachine instance;
+    private static volatile OrderStateMachine staticInstance;
     private final Map<OrderStatus, Set<OrderStatus>> transitions;
     private final Map<String, String> topicMappings;
 
-    private OrderStateMachine() {
+    // Campos para instancias con estado específico
+    private final Long orderId;
+    private volatile OrderStatus currentStatus;
+
+    /**
+     * Constructor por defecto - para instancia estática (reglas)
+     */
+    public OrderStateMachine() {
+        this.orderId = null;
+        this.currentStatus = null;
         this.transitions = initializeTransitions();
         this.topicMappings = initializeTopicMappings();
     }
 
     /**
-     * Implementación thread-safe del patrón Singleton usando double-checked locking
-     * @return La instancia única de OrderStateMachine
+     * Constructor para instancias específicas de orden
      */
+    public OrderStateMachine(Long orderId, OrderStatus initialStatus) {
+        if (orderId == null) {
+            throw new IllegalArgumentException("orderId cannot be null for stateful instances");
+        }
+        if (initialStatus == null) {
+            throw new IllegalArgumentException("initialStatus cannot be null for stateful instances");
+        }
+
+        this.orderId = orderId;
+        this.currentStatus = initialStatus;
+        this.transitions = initializeTransitions();
+        this.topicMappings = initializeTopicMappings();
+
+        log.debug("Created stateful OrderStateMachine for order {} with status {}", orderId, initialStatus);
+    }
+
+    /**
+     * Método para obtener instancia estática (solo reglas) - DEPRECATED
+     * @deprecated Use OrderStateMachineService instead
+     */
+    @Deprecated
     public static OrderStateMachine getInstance() {
-        if (instance == null) {
+        if (staticInstance == null) {
             synchronized (OrderStateMachine.class) {
-                if (instance == null) {
-                    instance = new OrderStateMachine();
+                if (staticInstance == null) {
+                    staticInstance = new OrderStateMachine();
                 }
             }
         }
-        return instance;
+        return staticInstance;
     }
 
     /**
@@ -41,9 +69,218 @@ public class OrderStateMachine {
      */
     public static void resetInstance() {
         synchronized (OrderStateMachine.class) {
-            instance = null;
+            staticInstance = null;
         }
     }
+
+    /**
+     * Verifica si esta es una instancia con estado (asociada a una orden específica)
+     */
+    public boolean isStateful() {
+        return orderId != null;
+    }
+
+    /**
+     * Obtiene el ID de la orden (solo para instancias con estado)
+     */
+    public Long getOrderId() {
+        if (!isStateful()) {
+            throw new IllegalStateException("This is a stateless instance, no order ID available");
+        }
+        return orderId;
+    }
+
+    /**
+     * Obtiene el estado actual (solo para instancias con estado)
+     */
+    public OrderStatus getCurrentStatus() {
+        if (!isStateful()) {
+            throw new IllegalStateException("This is a stateless instance, no current status available");
+        }
+        return currentStatus;
+    }
+
+    /**
+     * Verifica si puede hacer transición al estado objetivo (instancias con estado)
+     */
+    public boolean canTransitionTo(OrderStatus newStatus) {
+        if (!isStateful()) {
+            throw new IllegalStateException("This is a stateless instance, use isValidTransition instead");
+        }
+        return isValidTransition(currentStatus, newStatus);
+    }
+
+    /**
+     * Realiza transición al nuevo estado (instancias con estado)
+     */
+    public synchronized void transitionTo(OrderStatus newStatus) {
+        if (!isStateful()) {
+            throw new IllegalStateException("This is a stateless instance, cannot transition");
+        }
+
+        if (!canTransitionTo(newStatus)) {
+            throw new IllegalStateException(
+                    String.format("Invalid transition from %s to %s for order %d",
+                            currentStatus, newStatus, orderId));
+        }
+
+        OrderStatus previousStatus = currentStatus;
+        this.currentStatus = newStatus;
+
+        log.info("Order {} transitioned from {} to {}", orderId, previousStatus, newStatus);
+    }
+
+    /**
+     * Obtiene el topic para una transición desde el estado actual (instancias con estado)
+     */
+    public String getTopicForTransitionTo(OrderStatus targetStatus) {
+        if (!isStateful()) {
+            throw new IllegalStateException("This is a stateless instance, use getTopicNameForTransition instead");
+        }
+        return getTopicNameForTransition(currentStatus, targetStatus);
+    }
+
+    /**
+     * Obtiene los estados válidos siguientes desde el estado actual (instancias con estado)
+     */
+    public Set<OrderStatus> getValidNextStatesFromCurrent() {
+        if (!isStateful()) {
+            throw new IllegalStateException("This is a stateless instance, use getValidNextStates instead");
+        }
+        return getValidNextStates(currentStatus);
+    }
+
+    // ========== MÉTODOS ESTÁTICOS (SIN ESTADO) ==========
+
+    /**
+     * Verifica si una transición de estado es válida (método estático)
+     */
+    public boolean isValidTransition(OrderStatus from, OrderStatus to) {
+        Set<OrderStatus> validNextStates = transitions.get(from);
+        boolean isValid = validNextStates != null && validNextStates.contains(to);
+
+        if (!isValid) {
+            log.debug("Invalid transition attempted: {} -> {}", from, to);
+        }
+
+        return isValid;
+    }
+
+    /**
+     * Obtiene los estados válidos siguientes para un estado dado (método estático)
+     */
+    public Set<OrderStatus> getValidNextStates(OrderStatus currentStatus) {
+        Set<OrderStatus> validStates = transitions.getOrDefault(currentStatus, EnumSet.noneOf(OrderStatus.class));
+        log.debug("Valid next states for {}: {}", currentStatus, validStates);
+        return validStates;
+    }
+
+    /**
+     * Obtiene el nombre del topic para una transición específica (método estático)
+     */
+    public String getTopicNameForTransition(OrderStatus from, OrderStatus to) {
+        String key = from.name() + "->" + to.name();
+        String topic = topicMappings.get(key);
+
+        if (topic == null) {
+            log.debug("No specific topic mapping found for transition {} -> {}", from, to);
+        }
+
+        return topic;
+    }
+
+    /**
+     * Verifica si un estado es terminal (método estático)
+     */
+    public boolean isTerminalState(OrderStatus status) {
+        Set<OrderStatus> nextStates = getValidNextStates(status);
+        boolean isTerminal = nextStates.isEmpty();
+
+        if (isTerminal) {
+            log.debug("State {} is terminal", status);
+        }
+
+        return isTerminal;
+    }
+
+    /**
+     * Obtiene el mejor estado siguiente hacia un objetivo específico (método estático)
+     */
+    public OrderStatus getBestNextStateTowards(OrderStatus currentStatus, OrderStatus targetStatus) {
+        Set<OrderStatus> validNextStates = getValidNextStates(currentStatus);
+
+        if (validNextStates.contains(targetStatus)) {
+            return targetStatus;
+        }
+
+        // Estrategia de progresión hacia estados objetivo comunes
+        if (targetStatus == OrderStatus.ORDER_COMPLETED) {
+            // Priorizar estados que nos acerquen al completado
+            if (validNextStates.contains(OrderStatus.ORDER_PROCESSING)) {
+                return OrderStatus.ORDER_PROCESSING;
+            }
+            if (validNextStates.contains(OrderStatus.ORDER_PREPARED)) {
+                return OrderStatus.ORDER_PREPARED;
+            }
+            if (validNextStates.contains(OrderStatus.SHIPPING_PENDING)) {
+                return OrderStatus.SHIPPING_PENDING;
+            }
+            if (validNextStates.contains(OrderStatus.DELIVERED)) {
+                return OrderStatus.DELIVERED;
+            }
+        }
+
+        // Si no hay una progresión clara, retornar el primer estado válido o null
+        return validNextStates.isEmpty() ? null : validNextStates.iterator().next();
+    }
+
+    /**
+     * Calcula la distancia (número de pasos) entre dos estados (método estático)
+     */
+    public int calculateDistanceBetweenStates(OrderStatus from, OrderStatus to) {
+        if (from == to) {
+            return 0;
+        }
+
+        // Implementación simple usando BFS - puede ser optimizada
+        Set<OrderStatus> visited = EnumSet.noneOf(OrderStatus.class);
+        Map<OrderStatus, Integer> distances = new HashMap<>();
+
+        distances.put(from, 0);
+        visited.add(from);
+
+        // BFS simple
+        boolean found = false;
+        int currentDistance = 0;
+        Set<OrderStatus> currentLevel = EnumSet.of(from);
+
+        while (!currentLevel.isEmpty() && !found && currentDistance < 10) { // Límite para evitar loops infinitos
+            Set<OrderStatus> nextLevel = EnumSet.noneOf(OrderStatus.class);
+
+            for (OrderStatus current : currentLevel) {
+                Set<OrderStatus> neighbors = getValidNextStates(current);
+
+                for (OrderStatus neighbor : neighbors) {
+                    if (!visited.contains(neighbor)) {
+                        visited.add(neighbor);
+                        distances.put(neighbor, currentDistance + 1);
+                        nextLevel.add(neighbor);
+
+                        if (neighbor == to) {
+                            found = true;
+                        }
+                    }
+                }
+            }
+
+            currentLevel = nextLevel;
+            currentDistance++;
+        }
+
+        return distances.getOrDefault(to, -1); // -1 indica que no hay ruta
+    }
+
+    // ========== MÉTODOS DE INICIALIZACIÓN (SIN CAMBIOS) ==========
 
     private Map<OrderStatus, Set<OrderStatus>> initializeTransitions() {
         Map<OrderStatus, Set<OrderStatus>> map = new HashMap<>();
@@ -202,135 +439,5 @@ public class OrderStateMachine {
         map.put("DELIVERED->ORDER_COMPLETED", "order-completed");
 
         return map;
-    }
-
-    /**
-     * Verifica si una transición de estado es válida
-     */
-    public boolean isValidTransition(OrderStatus from, OrderStatus to) {
-        Set<OrderStatus> validNextStates = transitions.get(from);
-        boolean isValid = validNextStates != null && validNextStates.contains(to);
-
-        if (!isValid) {
-            log.debug("Invalid transition attempted: {} -> {}", from, to);
-        }
-
-        return isValid;
-    }
-
-    /**
-     * Obtiene los estados válidos siguientes para un estado dado
-     */
-    public Set<OrderStatus> getValidNextStates(OrderStatus currentStatus) {
-        Set<OrderStatus> validStates = transitions.getOrDefault(currentStatus, EnumSet.noneOf(OrderStatus.class));
-        log.debug("Valid next states for {}: {}", currentStatus, validStates);
-        return validStates;
-    }
-
-    /**
-     * Obtiene el nombre del topic para una transición específica
-     */
-    public String getTopicNameForTransition(OrderStatus from, OrderStatus to) {
-        String key = from.name() + "->" + to.name();
-        String topic = topicMappings.get(key);
-
-        if (topic == null) {
-            log.debug("No specific topic mapping found for transition {} -> {}", from, to);
-        }
-
-        return topic;
-    }
-
-    /**
-     * Verifica si un estado es terminal (no tiene transiciones salientes)
-     */
-    public boolean isTerminalState(OrderStatus status) {
-        Set<OrderStatus> nextStates = getValidNextStates(status);
-        boolean isTerminal = nextStates.isEmpty();
-
-        if (isTerminal) {
-            log.debug("State {} is terminal", status);
-        }
-
-        return isTerminal;
-    }
-
-    /**
-     * Obtiene el mejor estado siguiente hacia un objetivo específico
-     * Útil para determinar rutas de progresión cuando la transición directa no es posible
-     */
-    public OrderStatus getBestNextStateTowards(OrderStatus currentStatus, OrderStatus targetStatus) {
-        Set<OrderStatus> validNextStates = getValidNextStates(currentStatus);
-
-        if (validNextStates.contains(targetStatus)) {
-            return targetStatus;
-        }
-
-        // Estrategia de progresión hacia estados objetivo comunes
-        if (targetStatus == OrderStatus.ORDER_COMPLETED) {
-            // Priorizar estados que nos acerquen al completado
-            if (validNextStates.contains(OrderStatus.ORDER_PROCESSING)) {
-                return OrderStatus.ORDER_PROCESSING;
-            }
-            if (validNextStates.contains(OrderStatus.ORDER_PREPARED)) {
-                return OrderStatus.ORDER_PREPARED;
-            }
-            if (validNextStates.contains(OrderStatus.SHIPPING_PENDING)) {
-                return OrderStatus.SHIPPING_PENDING;
-            }
-            if (validNextStates.contains(OrderStatus.DELIVERED)) {
-                return OrderStatus.DELIVERED;
-            }
-        }
-
-        // Si no hay una progresión clara, retornar el primer estado válido o null
-        return validNextStates.isEmpty() ? null : validNextStates.iterator().next();
-    }
-
-    /**
-     * Calcula la distancia (número de pasos) entre dos estados
-     * Útil para determinar la ruta más corta entre estados
-     */
-    public int calculateDistanceBetweenStates(OrderStatus from, OrderStatus to) {
-        if (from == to) {
-            return 0;
-        }
-
-        // Implementación simple usando BFS - puede ser optimizada
-        Set<OrderStatus> visited = EnumSet.noneOf(OrderStatus.class);
-        Map<OrderStatus, Integer> distances = new HashMap<>();
-
-        distances.put(from, 0);
-        visited.add(from);
-
-        // BFS simple
-        boolean found = false;
-        int currentDistance = 0;
-        Set<OrderStatus> currentLevel = EnumSet.of(from);
-
-        while (!currentLevel.isEmpty() && !found && currentDistance < 10) { // Límite para evitar loops infinitos
-            Set<OrderStatus> nextLevel = EnumSet.noneOf(OrderStatus.class);
-
-            for (OrderStatus current : currentLevel) {
-                Set<OrderStatus> neighbors = getValidNextStates(current);
-
-                for (OrderStatus neighbor : neighbors) {
-                    if (!visited.contains(neighbor)) {
-                        visited.add(neighbor);
-                        distances.put(neighbor, currentDistance + 1);
-                        nextLevel.add(neighbor);
-
-                        if (neighbor == to) {
-                            found = true;
-                        }
-                    }
-                }
-            }
-
-            currentLevel = nextLevel;
-            currentDistance++;
-        }
-
-        return distances.getOrDefault(to, -1); // -1 indica que no hay ruta
     }
 }

@@ -59,7 +59,7 @@ public class ReactiveUtils {
     }
 
     /**
-     * Combina la aplicación de contexto MDC y métricas
+     * Combina la aplicación de contexto MDC y métricas con array de tags
      */
     public static <T> Mono<T> withContextAndMetrics(
             Map<String, String> context,
@@ -70,6 +70,39 @@ public class ReactiveUtils {
 
         return withDiagnosticContext(context, () ->
                 withMetrics(operation.get(), meterRegistry, metricName, tags));
+    }
+
+    /**
+     * ✅ SOBRECARGA FALTANTE: Combina la aplicación de contexto MDC y métricas con un solo tag
+     */
+    public static <T> Mono<T> withContextAndMetrics(
+            Map<String, String> context,
+            Supplier<Mono<T>> operation,
+            MeterRegistry meterRegistry,
+            String metricName,
+            Tag tag) {
+
+        return withContextAndMetrics(context, operation, meterRegistry, metricName, new Tag[]{tag});
+    }
+
+    /**
+     * ✅ SOBRECARGA ADICIONAL: Para compatibilidad con Iterable<Tag>
+     */
+    public static <T> Mono<T> withContextAndMetrics(
+            Map<String, String> context,
+            Supplier<Mono<T>> operation,
+            MeterRegistry meterRegistry,
+            String metricName,
+            Iterable<Tag> tags) {
+
+        // Convertir Iterable<Tag> a Tag[]
+        List<Tag> tagList = new ArrayList<>();
+        if (tags != null) {
+            tags.forEach(tagList::add);
+        }
+        Tag[] tagArray = tagList.toArray(new Tag[0]);
+
+        return withContextAndMetrics(context, operation, meterRegistry, metricName, tagArray);
     }
 
     /**

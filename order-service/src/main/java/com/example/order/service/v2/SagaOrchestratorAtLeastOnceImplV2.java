@@ -2,6 +2,7 @@ package com.example.order.service.v2;
 
 import com.example.order.config.MetricsConstants;
 import com.example.order.domain.Order;
+import com.example.order.domain.OrderStateMachine;
 import com.example.order.domain.OrderStatus;
 import com.example.order.events.EventTopics;
 import com.example.order.events.OrderCreatedEvent;
@@ -15,6 +16,7 @@ import com.example.order.service.CompensationManager;
 import com.example.order.service.EventPublisher;
 import com.example.order.service.IdGenerator;
 import com.example.order.service.InventoryService;
+import com.example.order.service.OrderStateMachineService;
 import com.example.order.service.SagaOrchestrator;
 import com.example.order.utils.ReactiveUtils;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -46,13 +48,15 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
             @Qualifier("orderEventPublisher") EventPublisher eventPublisher,
             InventoryService inventoryService,
             CompensationManager compensationManager,
-            EventRepository eventRepository) {
+            EventRepository eventRepository,
+            OrderStateMachineService stateMachineService) { // ✅ Cambiar a OrderStateMachineService
         super(transactionalOperator,
                 meterRegistry,
                 idGenerator,
                 resilienceManager,
                 eventPublisher,
-                eventRepository);
+                eventRepository,
+                stateMachineService); // ✅ Pasar OrderStateMachineService
         this.inventoryService = inventoryService;
         this.compensationManager = compensationManager;
     }
@@ -77,11 +81,15 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
         // Crear tag para métricas
         Tag correlationTag = Tag.of("correlation_id", correlationId);
 
+        // ✅ Crear máquina de estados específica para esta orden
+        OrderStateMachine orderStateMachine = stateMachineService
+                .createForOrder(orderId, OrderStatus.ORDER_UNKNOWN);
+
         // Usar ReactiveUtils.withContextAndMetrics
         return ReactiveUtils.withContextAndMetrics(
                         context,
                         () -> {
-                            log.info("Starting order saga execution with quantity={}, amount={}", quantity, amount);
+                            log.info("Starting AT LEAST ONCE order saga execution with quantity={}, amount={}", quantity, amount);
 
                             // CORREGIDO: Flujo simplificado y más robusto
                             return createOrder(orderId, correlationId, eventId, externalReference, quantity)
@@ -92,6 +100,23 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
                                     .flatMap(event -> {
                                         log.info("Stock reserved, validating transition to ORDER_COMPLETED");
                                         return completeOrderSafely(orderId, correlationId);
+                                    })
+                                    .doOnSuccess(order -> {
+                                        log.info("AT LEAST ONCE order saga completed successfully for orderId={}", orderId);
+                                        meterRegistry.counter("saga.completed",
+                                                "status", "success",
+                                                "type", "at_least_once").increment();
+                                    })
+                                    .doOnError(e -> {
+                                        log.error("AT LEAST ONCE order saga failed: {}", e.getMessage(), e);
+                                        meterRegistry.counter("saga.completed",
+                                                "status", "error",
+                                                "type", "at_least_once").increment();
+                                    })
+                                    .doFinally(signal -> {
+                                        // ✅ SOLUCIÓN: Solo un cleanup en doFinally
+                                        stateMachineService.removeForOrder(orderId);
+                                        log.debug("Cleaned up state machine for order {}", orderId);
                                     });
                         },
                         meterRegistry,
@@ -102,114 +127,6 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
                     log.error("Order saga failed: {}", e.getMessage(), e);
                     return handleSagaError(orderId, correlationId, e);
                 });
-    }
-
-    /**
-     * NUEVO: Método para completar la orden de forma segura, manejando transiciones de estado
-     */
-    private Mono<Order> completeOrderSafely(Long orderId, String correlationId) {
-        return eventRepository.getOrderStatus(orderId)
-                .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
-                .flatMap(currentStatus -> {
-                    log.debug("Current order status: {} for order {}", currentStatus, orderId);
-
-                    // Determinar el mejor estado de finalización basado en el estado actual
-                    OrderStatus targetStatus = determineBestCompletionStatus(currentStatus);
-
-                    if (stateMachine.isValidTransition(currentStatus, targetStatus)) {
-                        log.info("Transitioning order {} from {} to {}", orderId, currentStatus, targetStatus);
-                        return updateOrderStatus(orderId, targetStatus, correlationId);
-                    } else {
-                        log.warn("Cannot transition from {} to {} for order {}", currentStatus, targetStatus, orderId);
-
-                        // Buscar estados alternativos progresivos
-                        Set<OrderStatus> validNextStates = stateMachine.getValidNextStates(currentStatus);
-                        if (!validNextStates.isEmpty()) {
-                            OrderStatus nextStatus = determineNextBestState(validNextStates, targetStatus);
-                            log.info("Transitioning to {} instead for order {}", nextStatus, orderId);
-                            return updateOrderStatus(orderId, nextStatus, correlationId);
-                        } else {
-                            log.warn("No valid transitions available from {}, keeping current status", currentStatus);
-                            return Mono.just(new Order(orderId, currentStatus, correlationId));
-                        }
-                    }
-                });
-    }
-
-    /**
-     * NUEVO: Determina el mejor estado de finalización basado en el estado actual
-     */
-    private OrderStatus determineBestCompletionStatus(OrderStatus currentStatus) {
-        // Si ya está en un estado avanzado, mantenerlo
-        if (currentStatus == OrderStatus.DELIVERED ||
-                currentStatus == OrderStatus.RECEIVED_CONFIRMED) {
-            return OrderStatus.ORDER_COMPLETED;
-        }
-
-        // Para estados intermedios, buscar progresión natural
-        Set<OrderStatus> validNextStates = stateMachine.getValidNextStates(currentStatus);
-
-        if (validNextStates.contains(OrderStatus.ORDER_COMPLETED)) {
-            return OrderStatus.ORDER_COMPLETED;
-        }
-
-        // Estados progresivos en orden de preferencia
-        if (validNextStates.contains(OrderStatus.ORDER_PROCESSING)) {
-            return OrderStatus.ORDER_PROCESSING;
-        }
-        if (validNextStates.contains(OrderStatus.ORDER_PREPARED)) {
-            return OrderStatus.ORDER_PREPARED;
-        }
-        if (validNextStates.contains(OrderStatus.SHIPPING_PENDING)) {
-            return OrderStatus.SHIPPING_PENDING;
-        }
-
-        // Si no hay buena opción, mantener el estado actual
-        return currentStatus;
-    }
-
-    /**
-     * NUEVO: Maneja errores en la saga de forma centralizada
-     */
-    private Mono<Order> handleSagaError(Long orderId, String correlationId, Throwable error) {
-        return eventRepository.getOrderStatus(orderId)
-                .defaultIfEmpty(OrderStatus.ORDER_UNKNOWN)
-                .flatMap(currentStatus -> {
-                    OrderStatus errorStatus = determineErrorStatus(currentStatus);
-                    log.info("Transitioning order {} to error state: {}", orderId, errorStatus);
-                    return updateOrderStatus(orderId, errorStatus, correlationId);
-                })
-                .onErrorResume(updateError -> {
-                    log.error("Failed to update order status during error handling: {}", updateError.getMessage());
-                    // Retornar orden con estado de error técnico como fallback
-                    return Mono.just(new Order(orderId, OrderStatus.TECHNICAL_EXCEPTION, correlationId));
-                });
-    }
-
-    /**
-     * Determina el mejor estado siguiente cuando la transición deseada no es válida
-     */
-    private OrderStatus determineNextBestState(Set<OrderStatus> validNextStates, OrderStatus desiredState) {
-        // Si el estado deseado está en los válidos, lo usamos
-        if (validNextStates.contains(desiredState)) {
-            return desiredState;
-        }
-
-        // Estrategia de priorización: buscar estados que nos acerquen al objetivo
-        if (desiredState == OrderStatus.ORDER_COMPLETED) {
-            if (validNextStates.contains(OrderStatus.ORDER_PROCESSING)) {
-                return OrderStatus.ORDER_PROCESSING;
-            }
-            if (validNextStates.contains(OrderStatus.ORDER_PREPARED)) {
-                return OrderStatus.ORDER_PREPARED;
-            }
-            if (validNextStates.contains(OrderStatus.SHIPPING_PENDING)) {
-                return OrderStatus.SHIPPING_PENDING;
-            }
-        }
-
-        // Si no hay una buena opción progresiva, usar el primer estado válido
-        return validNextStates.iterator().next();
     }
 
     @Override
@@ -268,7 +185,7 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
     }
 
     /**
-     * NUEVO: Ejecuta la acción del paso de forma transaccional
+     * MIGRACIÓN: Ejecuta la acción del paso de forma transaccional usando OrderStateMachineService
      */
     private Mono<OrderEvent> executeStepAction(SagaStep step) {
         return eventRepository.saveEventHistory(
@@ -300,25 +217,6 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
                 );
     }
 
-    /**
-     * NUEVO: Determina el topic apropiado para un paso
-     */
-    private String determineStepTopic(SagaStep step) {
-        String topic = step.getTopic();
-
-        // Validación adicional para pasos específicos
-        if ("reserveStock".equals(step.getName())) {
-            String expectedTopic = stateMachine.getTopicNameForTransition(
-                    OrderStatus.PAYMENT_CONFIRMED, OrderStatus.STOCK_RESERVED);
-            if (expectedTopic != null && !expectedTopic.equals(topic)) {
-                log.warn("Topic mismatch for step {}: expected {}, got {}",
-                        step.getName(), expectedTopic, topic);
-            }
-        }
-
-        return topic;
-    }
-
     @Override
     public Mono<Order> createOrder(Long orderId, String correlationId, String eventId, String externalReference, int quantity) {
         Map<String, String> context = ReactiveUtils.createContext(
@@ -339,8 +237,8 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
 
                             OrderEvent event = new OrderCreatedEvent(orderId, correlationId, eventId, externalReference, quantity);
 
-                            // Determinar el topic usando la máquina de estados
-                            String topic = stateMachine.getTopicNameForTransition(
+                            // MIGRACIÓN: Determinar el topic usando OrderStateMachineService
+                            String topic = stateMachineService.getTopicForTransition(
                                     OrderStatus.ORDER_UNKNOWN, OrderStatus.ORDER_CREATED);
 
                             if (topic == null) {
@@ -392,7 +290,8 @@ public class SagaOrchestratorAtLeastOnceImplV2 extends BaseSagaOrchestratorV2 im
         return ReactiveUtils.withDiagnosticContext(context, () -> {
             log.info("Creating failed event with reason: {}, externalReference: {}", reason, externalReference);
 
-            String failureTopic = stateMachine.getTopicNameForTransition(
+            // MIGRACIÓN: Usar OrderStateMachineService para obtener el topic
+            String failureTopic = stateMachineService.getTopicForTransition(
                     OrderStatus.ORDER_UNKNOWN, OrderStatus.ORDER_FAILED);
 
             if (failureTopic == null) {

@@ -4,9 +4,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.test.context.ActiveProfiles;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+@ActiveProfiles("unit")
 class OrderStatusTest {
 
     @Test
@@ -29,29 +31,23 @@ class OrderStatusTest {
     }
 
     @Test
-    @DisplayName("Verifica las transiciones de estado válidas")
-    void testValidStateTransitions() {
-        assertTrue(OrderStateTransition.isValidTransition(OrderStatus.ORDER_CREATED, OrderStatus.ORDER_PENDING));
-        assertTrue(OrderStateTransition.isValidTransition(OrderStatus.ORDER_PENDING, OrderStatus.STOCK_RESERVED));
-        assertTrue(OrderStateTransition.isValidTransition(OrderStatus.ORDER_PENDING, OrderStatus.ORDER_FAILED));
-        assertTrue(OrderStateTransition.isValidTransition(OrderStatus.STOCK_RESERVED, OrderStatus.ORDER_COMPLETED));
-        assertTrue(OrderStateTransition.isValidTransition(OrderStatus.STOCK_RESERVED, OrderStatus.ORDER_FAILED));
-
-        // Estado terminal COMPLETED no tiene transiciones válidas
-        assertFalse(OrderStateTransition.isValidTransition(OrderStatus.ORDER_COMPLETED, OrderStatus.ORDER_FAILED));
-        assertFalse(OrderStateTransition.isValidTransition(OrderStatus.ORDER_COMPLETED, OrderStatus.ORDER_PENDING));
-
-        // Estado terminal FAILED no tiene transiciones válidas
-        assertFalse(OrderStateTransition.isValidTransition(OrderStatus.ORDER_FAILED, OrderStatus.ORDER_COMPLETED));
-        assertFalse(OrderStateTransition.isValidTransition(OrderStatus.ORDER_FAILED, OrderStatus.ORDER_PENDING));
+    @DisplayName("Verifica valores específicos del enum")
+    void testSpecificEnumValues() {
+        assertEquals("ORDER_CREATED", OrderStatus.ORDER_CREATED.getValue());
+        assertEquals("ORDER_PENDING", OrderStatus.ORDER_PENDING.getValue());
+        assertEquals("ORDER_COMPLETED", OrderStatus.ORDER_COMPLETED.getValue());
+        assertEquals("ORDER_FAILED", OrderStatus.ORDER_FAILED.getValue());
+        assertEquals("STOCK_RESERVED", OrderStatus.STOCK_RESERVED.getValue());
     }
 
     @Test
-    @DisplayName("Verifica la asignación de eventos a estados")
-    void testEventToStatusMapping() {
-        assertEquals(OrderStatus.ORDER_PENDING, OrderStatus.ORDER_CREATED);
-        assertEquals(OrderStatus.STOCK_RESERVED, OrderStatus.STOCK_RESERVED);
-        assertEquals(OrderStatus.ORDER_COMPLETED, OrderStatus.ORDER_COMPLETED);
-        assertEquals(OrderStatus.ORDER_FAILED, OrderStatus.ORDER_FAILED);
+    @DisplayName("Verifica casos edge del fromValue")
+    void testFromValueEdgeCases() {
+        // Null debería lanzar excepción
+        assertThrows(IllegalArgumentException.class, () -> OrderStatus.fromValue(null));
+
+        // Caso sensitivo
+        assertThrows(IllegalArgumentException.class, () -> OrderStatus.fromValue("order_created"));
+        assertThrows(IllegalArgumentException.class, () -> OrderStatus.fromValue("Order_Created"));
     }
 }
