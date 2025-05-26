@@ -3,6 +3,11 @@ Estado actual:
 order-service/src/test/java/com/example/order/actuator: GREEN
 order-service/src/test/java/com/example/order/domain: GREEN
 order-service/src/test/java/com/example/order/service/unit: GREEN
+order-service/src/test/java/com/example/order/repository/CompositeEventRepositoryMinimalTest.java: GREEN
+order-service/src/test/java/com/example/order/repository/CompositeEventRepositorySimpleTest.java: GREEN
 
-order-service/src/test/java/com/example/order/repository: RED
 order-service/src/test/java/com/example/order/service/integration: RED
+order-service/src/test/java/com/example/order/repository/CompositeEventRepositoryIntegrationTest.java: RED
+order-service/src/test/java/com/example/order/repository/CompositeEventRepositoryResilienceTest: RED
+order-service/src/test/java/com/example/order/repository/CompositeEventRepositorySagaIntegrationTest: RED
+order-service/src/test/java/com/example/order/repository/CompositeEventRepositorySimpleIntegrationTest: RED

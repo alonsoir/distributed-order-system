@@ -1,0 +1,148 @@
+{
+  "groups": [
+    {
+      "name": "dlq",
+      "type": "com.example.order.service.AbstractDLQManager$DLQConfig",
+      "sourceType": "com.example.order.service.AbstractDLQManager$DLQConfig"
+    },
+    {
+      "name": "event.persistence",
+      "type": "com.example.order.config.EventPersistenceConfig",
+      "sourceType": "com.example.order.config.EventPersistenceConfig"
+    },
+    {
+      "name": "event.repository",
+      "type": "com.example.order.repository.EventRepositoryProperties",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties"
+    },
+    {
+      "name": "management.endpoint.saga-strategy",
+      "type": "com.example.order.actuator.StrategyConfigurationManager",
+      "sourceType": "com.example.order.actuator.StrategyConfigurationManager"
+    },
+    {
+      "name": "order.service.strategy",
+      "type": "com.example.order.actuator.cloud.CloudStrategyConfigurationProperties",
+      "sourceType": "com.example.order.actuator.cloud.CloudStrategyConfigurationProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "dlq.backoff-seconds",
+      "type": "java.lang.Long",
+      "sourceType": "com.example.order.service.AbstractDLQManager$DLQConfig",
+      "defaultValue": 1
+    },
+    {
+      "name": "dlq.event-expiration-hours",
+      "type": "java.lang.Long",
+      "sourceType": "com.example.order.service.AbstractDLQManager$DLQConfig",
+      "defaultValue": 24
+    },
+    {
+      "name": "dlq.process-interval",
+      "type": "java.lang.Long",
+      "sourceType": "com.example.order.service.AbstractDLQManager$DLQConfig",
+      "defaultValue": 60000
+    },
+    {
+      "name": "dlq.retry-max-attempts",
+      "type": "java.lang.Long",
+      "sourceType": "com.example.order.service.AbstractDLQManager$DLQConfig",
+      "defaultValue": 3
+    },
+    {
+      "name": "event.persistence.topics",
+      "type": "java.util.Map<java.lang.String,com.example.order.config.EventPersistenceConfig$PersistenceConfig>",
+      "sourceType": "com.example.order.config.EventPersistenceConfig"
+    },
+    {
+      "name": "event.repository.circuit-breaker-failure-threshold",
+      "type": "java.lang.Integer",
+      "description": "Umbral de fallos para abrir el circuit breaker",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties",
+      "defaultValue": 5
+    },
+    {
+      "name": "event.repository.circuit-breaker-open-time-millis",
+      "type": "java.lang.Integer",
+      "description": "Tiempo en estado abierto para el circuit breaker (en milisegundos)",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties",
+      "defaultValue": 30000
+    },
+    {
+      "name": "event.repository.enable-circuit-breaker",
+      "type": "java.lang.Boolean",
+      "description": "Habilitar\/deshabilitar el circuit breaker",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties",
+      "defaultValue": true
+    },
+    {
+      "name": "event.repository.max-retries",
+      "type": "java.lang.Integer",
+      "description": "Número máximo de reintentos para operaciones transitorias",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties",
+      "defaultValue": 3
+    },
+    {
+      "name": "event.repository.metrics-prefix",
+      "type": "java.lang.String",
+      "description": "Prefijo para métricas",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties",
+      "defaultValue": "repository"
+    },
+    {
+      "name": "event.repository.operation-timeout-millis",
+      "type": "java.lang.Integer",
+      "description": "Tiempo máximo de espera para operaciones (en milisegundos)",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties",
+      "defaultValue": 5000
+    },
+    {
+      "name": "event.repository.retry-backoff-millis",
+      "type": "java.lang.Integer",
+      "description": "Tiempo de espera inicial entre reintentos (en milisegundos)",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties",
+      "defaultValue": 100
+    },
+    {
+      "name": "event.repository.verbose-logging",
+      "type": "java.lang.Boolean",
+      "description": "Registro detallado de operaciones (además de errores)",
+      "sourceType": "com.example.order.repository.EventRepositoryProperties",
+      "defaultValue": false
+    },
+    {
+      "name": "management.endpoint.saga-strategy.access",
+      "type": "org.springframework.boot.actuate.endpoint.Access",
+      "description": "Permitted level of access for the saga-strategy endpoint.",
+      "sourceType": "com.example.order.actuator.StrategyConfigurationManager",
+      "defaultValue": "unrestricted"
+    },
+    {
+      "name": "management.endpoint.saga-strategy.cache.time-to-live",
+      "type": "java.time.Duration",
+      "description": "Maximum time that a response can be cached.",
+      "sourceType": "com.example.order.actuator.StrategyConfigurationManager",
+      "defaultValue": "0ms"
+    },
+    {
+      "name": "order.service.strategy.order-service",
+      "type": "com.example.order.service.DynamicOrderService",
+      "sourceType": "com.example.order.actuator.cloud.CloudStrategyConfigurationProperties"
+    },
+    {
+      "name": "management.endpoint.saga-strategy.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Whether to enable the saga-strategy endpoint.",
+      "sourceType": "com.example.order.actuator.StrategyConfigurationManager",
+      "defaultValue": true,
+      "deprecated": true,
+      "deprecation": {
+        "replacement": "management.endpoint.saga-strategy.access",
+        "since": "3.4.0"
+      }
+    }
+  ],
+  "hints": []
+}

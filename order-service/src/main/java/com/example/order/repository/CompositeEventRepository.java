@@ -21,22 +21,23 @@ import reactor.core.publisher.Mono;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
-import java.time.Duration;
-
 /**
- * Implementación compuesta del EventRepository que delega en repositorios especializados
- * con capacidades de logging y reintentos para errores transitorios.
+ * Implementación compuesta del EventRepository que delega en repositorios especializados.
+ *
+ * Esta clase implementa la interfaz EventRepository y extiende AbstractEventRepository
+ * para obtener las funcionalidades de infraestructura (métricas, reintentos, circuit breakers).
+ *
+ * Responsabilidades:
+ * - Implementar el contrato público de EventRepository
+ * - Delegar operaciones a repositorios especializados
+ * - Aplicar validaciones específicas donde sea necesario
  */
 @Primary
 @Repository
 @Validated
-public class CompositeEventRepository extends AbstractEventRepository {
+public class CompositeEventRepository extends AbstractEventRepository implements EventRepository {
 
     private static final Logger log = LoggerFactory.getLogger(CompositeEventRepository.class);
-
-    // Configuración para reintentos de operaciones transitorias
-    private static final int MAX_RETRIES = 3;
-    private static final Duration RETRY_BACKOFF = Duration.ofMillis(100);
 
     private final ProcessedEventRepository processedEventRepository;
     private final OrderRepository orderRepository;
@@ -53,15 +54,20 @@ public class CompositeEventRepository extends AbstractEventRepository {
             EventHistoryRepository eventHistoryRepository,
             TransactionLockRepository transactionLockRepository) {
 
-        // Llamar al constructor padre PRIMERO
+        // Llamar al constructor padre PRIMERO para inicializar infraestructura
         super(meterRegistry, circuitBreakerRegistry);
 
+        // Inicializar dependencias de negocio
         this.processedEventRepository = processedEventRepository;
         this.orderRepository = orderRepository;
         this.sagaFailureRepository = sagaFailureRepository;
         this.eventHistoryRepository = eventHistoryRepository;
         this.transactionLockRepository = transactionLockRepository;
     }
+
+    // ===========================================
+    // IMPLEMENTACIÓN DE LA INTERFAZ EventRepository
+    // ===========================================
 
     @Override
     public Mono<OrderStatus> getOrderStatus(@NotNull Long orderId) {
@@ -205,6 +211,14 @@ public class CompositeEventRepository extends AbstractEventRepository {
 
     @Override
     public Mono<Boolean> acquireTransactionLock(String resourceId, String correlationId, int timeoutSeconds) {
+        // Validaciones específicas para operaciones de bloqueo
+        if (resourceId == null || resourceId.trim().isEmpty()) {
+            return Mono.error(new IllegalArgumentException("Resource ID cannot be null or empty"));
+        }
+        if (correlationId == null || correlationId.trim().isEmpty()) {
+            return Mono.error(new IllegalArgumentException("Correlation ID cannot be null or empty"));
+        }
+
         return executeOperation("acquireTransactionLock",
                 transactionLockRepository.acquireTransactionLock(resourceId, correlationId, timeoutSeconds),
                 this::isTransientError);
@@ -212,219 +226,33 @@ public class CompositeEventRepository extends AbstractEventRepository {
 
     @Override
     public Mono<Void> releaseTransactionLock(String resourceId, String correlationId) {
+        // Validaciones específicas para operaciones de bloqueo
+        if (resourceId == null || resourceId.trim().isEmpty()) {
+            return Mono.error(new IllegalArgumentException("Resource ID cannot be null or empty"));
+        }
+        if (correlationId == null || correlationId.trim().isEmpty()) {
+            return Mono.error(new IllegalArgumentException("Correlation ID cannot be null or empty"));
+        }
+
         return executeOperation("releaseTransactionLock",
                 transactionLockRepository.releaseTransactionLock(resourceId, correlationId),
                 this::isTransientError);
     }
 
-    /**
-     * Sobrescribe el método de la clase padre para agregar lógica específica de CompositeEventRepository
-     * Mantiene el modificador de acceso 'protected' para ser consistente con la clase padre
-     */
-    @Override
-    protected boolean isTransientError(Throwable throwable) {
-        // Primero, usa la lógica del padre
-        boolean parentResult = super.isTransientError(throwable);
-
-        // Si el padre ya determinó que es transitorio, retornamos true
-        if (parentResult) {
-            return true;
-        }
-
-        // Lógica adicional específica para CompositeEventRepository
-        if (throwable instanceof RuntimeException) {
-            String errorMsg = throwable.getMessage();
-            if (errorMsg != null && (
-                    errorMsg.contains("Database connection error") ||
-                            errorMsg.contains("Error releasing lock"))) {
-                log.debug("Will retry test-specific error: {}", errorMsg);
-                return true;
-            }
-        }
-
-        // Validation/state errors that should NOT be retried
-        if (throwable instanceof IllegalArgumentException ||
-                throwable instanceof jakarta.validation.ConstraintViolationException ||
-                throwable instanceof IllegalStateException) {
-            log.debug("No retry for validation/argument error: {}", throwable.getMessage());
-            return false;
-        }
-
-        // Connection and concurrency errors should be retried
-        if (isConnectionError(throwable) || isDataConcurrencyError(throwable) ||
-                isResourceTemporarilyUnavailableError(throwable)) {
-            return true;
-        }
-
-        // Database-specific errors
-        if (shouldRetryR2dbcError(throwable) || shouldRetryRedisError(throwable)) {
-            return true;
-        }
-
-        // Check for nested causes
-        if (throwable.getCause() != null && throwable.getCause() != throwable) {
-            return isTransientError(throwable.getCause());
-        }
-
-        // By default, consider RuntimeExceptions as potentially transient
-        if (throwable instanceof RuntimeException) {
-            String className = throwable.getClass().getName();
-            // Skip retrying specific runtime exceptions that are not transient
-            if (className.contains("IllegalArgumentException") ||
-                    className.contains("IllegalStateException") ||
-                    isDataIntegrityError(throwable) ||
-                    isSecurityError(throwable)) {
-                return false;
-            }
-
-            log.debug("Will retry unclassified RuntimeException: {}", throwable.getMessage());
-            return true;
-        }
-
-        // Checked exceptions are generally not transient
-        log.debug("No retry for checked exception: {}", throwable.getClass().getName());
-        return false;
-    }
-
-    // Métodos auxiliares para clasificación específica de errores (mantenerlos como private está bien)
+    // ===========================================
+    // MÉTODOS DE CONVENIENCIA (OPCIONAL)
+    // ===========================================
 
     /**
-     * Detecta errores relacionados con problemas de conexión
+     * Método de conveniencia que utiliza la funcionalidad de la clase padre
+     * para ejecutar operaciones con bloqueo transaccional.
      */
-    private boolean isConnectionError(Throwable throwable) {
-        String className = throwable.getClass().getName();
-        String message = throwable.getMessage() != null ? throwable.getMessage().toLowerCase() : "";
-
-        return className.contains("ConnectException") ||
-                className.contains("ConnectionException") ||
-                className.contains("SocketException") ||
-                className.contains("SocketTimeoutException") ||
-                className.contains("TimeoutException") ||
-                message.contains("connection") && (
-                        message.contains("refused") ||
-                                message.contains("reset") ||
-                                message.contains("closed") ||
-                                message.contains("timeout") ||
-                                message.contains("timed out")
-                );
-    }
-
-    /**
-     * Detecta errores de concurrencia en operaciones de datos
-     */
-    private boolean isDataConcurrencyError(Throwable throwable) {
-        String className = throwable.getClass().getName();
-        String message = throwable.getMessage() != null ? throwable.getMessage().toLowerCase() : "";
-
-        return className.contains("OptimisticLockingFailureException") ||
-                className.contains("PessimisticLockingFailureException") ||
-                className.contains("CannotAcquireLockException") ||
-                className.contains("LockAcquisitionException") ||
-                className.contains("ConcurrencyFailureException") ||
-                message.contains("deadlock") ||
-                message.contains("lock") && (
-                        message.contains("timeout") ||
-                                message.contains("could not") ||
-                                message.contains("fail") ||
-                                message.contains("cannot")
-                );
-    }
-
-    /**
-     * Detecta errores de recursos temporalmente no disponibles
-     */
-    private boolean isResourceTemporarilyUnavailableError(Throwable throwable) {
-        String className = throwable.getClass().getName();
-        String message = throwable.getMessage() != null ? throwable.getMessage().toLowerCase() : "";
-
-        return className.contains("ResourceUnavailableException") ||
-                className.contains("ServiceUnavailableException") ||
-                className.contains("TooManyRequestsException") ||
-                className.contains("ThrottlingException") ||
-                message.contains("too many") && message.contains("request") ||
-                message.contains("rate limit") ||
-                message.contains("throttl") ||
-                message.contains("temporarily") && message.contains("unavailable") ||
-                message.contains("resource") && message.contains("exhausted") ||
-                message.contains("overload") ||
-                message.contains("insufficient") && message.contains("resource");
-    }
-
-    /**
-     * Detecta errores de integridad de datos (no transitorios)
-     */
-    private boolean isDataIntegrityError(Throwable throwable) {
-        String className = throwable.getClass().getName();
-
-        return className.contains("DataIntegrityViolationException") ||
-                className.contains("ConstraintViolationException") ||
-                className.contains("DuplicateKeyException") ||
-                className.contains("InvalidDataAccessApiUsageException");
-    }
-
-    /**
-     * Detecta errores de seguridad (no transitorios)
-     */
-    private boolean isSecurityError(Throwable throwable) {
-        String className = throwable.getClass().getName();
-        String message = throwable.getMessage() != null ? throwable.getMessage().toLowerCase() : "";
-
-        return className.contains("SecurityException") ||
-                className.contains("AccessDeniedException") ||
-                className.contains("AuthenticationException") ||
-                className.contains("AuthorizationException") ||
-                message.contains("unauthorized") ||
-                message.contains("forbidden") ||
-                message.contains("permission denied") ||
-                message.contains("access denied");
-    }
-
-    /**
-     * Política específica para errores de R2DBC
-     */
-    private boolean shouldRetryR2dbcError(Throwable throwable) {
-        String className = throwable.getClass().getName();
-        String message = throwable.getMessage() != null ? throwable.getMessage().toLowerCase() : "";
-
-        // R2DBC errores transitorios
-        if (className.contains("R2dbcTransientException") ||
-                className.contains("R2dbcTimeoutException") ||
-                className.contains("R2dbcConnectionException")) {
-            return true;
-        }
-
-        // R2DBC errores permanentes
-        if (className.contains("R2dbcNonTransientException") ||
-                className.contains("R2dbcBadGrammarException") ||
-                className.contains("R2dbcPermissionDeniedException")) {
-            return false;
-        }
-
-        // Análisis por mensaje
-        return message.contains("connection") ||
-                message.contains("timeout") ||
-                message.contains("unavailable");
-    }
-
-    /**
-     * Política específica para errores de Redis
-     */
-    private boolean shouldRetryRedisError(Throwable throwable) {
-        String className = throwable.getClass().getName();
-        String message = throwable.getMessage() != null ? throwable.getMessage().toLowerCase() : "";
-
-        // No reintentar errores de comando
-        if (className.contains("RedisCommandExecutionException") &&
-                !message.contains("connection") &&
-                !message.contains("timeout")) {
-            return false;
-        }
-
-        // Sí reintentar errores de conexión
-        return className.contains("RedisConnectionException") ||
-                className.contains("RedisConnectionFailureException") ||
-                message.contains("connection") ||
-                message.contains("timeout") ||
-                message.contains("retry");
+    protected <T> Mono<T> executeWithTransactionLock(String resourceId, String correlationId,
+                                                     int timeoutSeconds, Mono<T> operation) {
+        return executeWithLock(resourceId, correlationId, timeoutSeconds, operation,
+                // Lock acquirer function
+                resId -> corrId -> timeout -> acquireTransactionLock(resId, corrId, timeout),
+                // Lock releaser function
+                resId -> corrId -> releaseTransactionLock(resId, corrId));
     }
 }

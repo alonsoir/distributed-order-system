@@ -4,6 +4,11 @@ import java.time.Duration;
 
 /**
  * Constantes relacionadas con métricas y contadores
+ * TODO : Revisar y ajustar los valores según las necesidades del sistema
+ * Incluso estos valores pueden ser ajustados en tiempo de ejecución puesto que la ejecucion de
+ * la aplicacion se realiza en un contenedor Docker y su comportamiento físico puede variar.
+ * Sería una gran mejora poder ajustar estos valores en tiempo de ejecución según las necesidades
+ * del sistema, las métricas.
  */
 public final class MetricsConstants {
 

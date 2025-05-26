@@ -1,0 +1,61 @@
+# application-integration-test.yml - Configuración específica para tests de integración
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  cloud:
+    config:
+      enabled: false
+    discovery:
+      enabled: false
+    service-registry:
+      auto-registration:
+        enabled: false
+  sql:
+    init:
+      mode: never
+
+# Configuración minimalista de management
+management:
+  endpoints:
+    enabled-by-default: false
+  endpoint:
+    health:
+      enabled: true
+  metrics:
+    export:
+      defaults:
+        enabled: false
+
+# Configuración de Resilience4j SOLO para funcionalidad básica
+resilience4j:
+  fallback:
+    enabled: false
+  circuitbreaker:
+    enabled: true
+    configs:
+      default:
+        failure-rate-threshold: 90
+        wait-duration-in-open-state: 1s
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+  retry:
+    enabled: true
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 50ms
+
+# Configuración simplificada para tests
+order:
+  service:
+    strategy:
+      default-strategy: atLeastOnce
+
+# Logging específico para tests
+logging:
+  level:
+    com.example.order: DEBUG
+    org.springframework.boot.autoconfigure: WARN
+    io.github.resilience4j: WARN
+    org.springframework.cloud: WARN
+    org.testcontainers: INFO

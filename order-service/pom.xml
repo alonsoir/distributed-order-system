@@ -13,18 +13,14 @@
 
   <properties>
     <java.version>21</java.version>
-    <resilience4j.version>2.3.0</resilience4j.version>
+    <resilience4j.version>2.2.0</resilience4j.version>
     <testcontainers.version>1.21.0</testcontainers.version>
     <jackson.version>2.18.0</jackson.version>
     <testcontainers-redis.version>2.2.3</testcontainers-redis.version>
   </properties>
 
   <dependencies>
-    <dependency>
-      <groupId>io.github.resilience4j</groupId>
-      <artifactId>resilience4j-rxjava3</artifactId>
-      <version>${resilience4j.version}</version>
-    </dependency>
+
     <!-- Para Maven -->
     <dependency>
       <groupId>org.springframework.cloud</groupId>
