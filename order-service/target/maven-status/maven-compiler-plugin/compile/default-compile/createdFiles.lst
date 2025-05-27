@@ -3,6 +3,7 @@ com/example/order/repository/saga/SagaFailureRepository.class
 com/example/order/service/v2/RobustBaseSagaOrchestratorV2$ErrorType.class
 com/example/order/config/EventRepositoryConfig.class
 com/example/order/config/CircuitBreakerCategory.class
+com/example/order/domain/OrderStateMachine$SingletonHolder.class
 com/example/order/events/EventTopics.class
 com/example/order/events/EventWrapper.class
 com/example/order/exception/ApplicationException.class

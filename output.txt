@@ -11,3 +11,7 @@ order-service/src/test/java/com/example/order/repository/CompositeEventRepositor
 order-service/src/test/java/com/example/order/repository/CompositeEventRepositoryResilienceTest: RED
 order-service/src/test/java/com/example/order/repository/CompositeEventRepositorySagaIntegrationTest: RED
 order-service/src/test/java/com/example/order/repository/CompositeEventRepositorySimpleIntegrationTest: RED
+
+git add .
+git commit -m "SonarCloud"
+
