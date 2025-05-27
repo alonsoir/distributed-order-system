@@ -43,7 +43,6 @@ public class SagaConfiguration {
 
     @Bean
     @Primary
-    @Qualifier("atMostOnceSagaOrchestrator")
     public SagaOrchestrator atMostOnceSagaOrchestrator(
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
@@ -69,7 +68,6 @@ public class SagaConfiguration {
     }
 
     @Bean
-    @Qualifier("atLeastOnceSagaOrchestrator")
     public SagaOrchestrator atLeastOnceSagaOrchestrator(
             TransactionalOperator transactionalOperator,
             MeterRegistry meterRegistry,
