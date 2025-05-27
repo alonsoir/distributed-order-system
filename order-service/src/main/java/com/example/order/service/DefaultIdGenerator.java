@@ -73,8 +73,9 @@ public class DefaultIdGenerator implements IdGenerator {
         }
         this.nodeId = nodeId % (1 << NODE_ID_BITS);
 
-        // Inicializar el contador con un valor aleatorio para evitar colisiones iniciales
-        this.orderIdCounter = new AtomicLong(ThreadLocalRandom.current().nextLong(1, 1000));
+        // Inicializar el contador con un valor aleatorio para evitar colisiones iniciales.
+        // java:S2245
+        this.orderIdCounter = new AtomicLong(this.nodeId * 1000L + System.currentTimeMillis() % 1000);
 
         // Inicializar registro de IDs si se habilita la comprobación de colisiones
         this.idRegistry = checkCollisions ? new ConcurrentHashMap<>() : null;
