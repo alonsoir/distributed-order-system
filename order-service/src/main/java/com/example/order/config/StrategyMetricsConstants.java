@@ -135,13 +135,6 @@ public final class StrategyMetricsConstants {
     public static final String PROP_CHECK_INTERVAL = "order.service.strategy.manager.check-interval";
 
     // =============================================
-    // RUTAS Y ARCHIVOS
-    // =============================================
-
-    /** Ruta por defecto del archivo de configuración */
-    public static final String DEFAULT_CONFIG_FILE_PATH = "/config/saga-strategy.conf";
-
-    // =============================================
     // CLAVES DE RESPUESTA/INFO JSON
     // =============================================
 
@@ -176,6 +169,35 @@ public final class StrategyMetricsConstants {
     public static final String JSON_CHANGE_COUNT = "changeCount";
 
     // =============================================
+    // CLAVES DE REQUEST PARA CONTROLLER
+    // =============================================
+
+    /** Clave para estrategia en requests */
+    public static final String REQUEST_STRATEGY = "strategy";
+
+    /** Clave para override en requests */
+    public static final String REQUEST_OVERRIDE = "override";
+
+    // =============================================
+    // ENDPOINTS Y PATHS
+    // =============================================
+
+    /** Base path para management API */
+    public static final String API_BASE_PATH = "/api/management/saga";
+
+    /** Endpoint para estrategia */
+    public static final String ENDPOINT_STRATEGY = "/strategy";
+
+    /** Endpoint para limpiar override */
+    public static final String ENDPOINT_STRATEGY_OVERRIDE = "/strategy/override";
+
+    /** Endpoint para reconciliación */
+    public static final String ENDPOINT_STRATEGY_RECONCILE = "/strategy/reconcile";
+
+    /** Endpoint para estadísticas */
+    public static final String ENDPOINT_STRATEGY_STATS = "/strategy/stats";
+
+    // =============================================
     // MENSAJES DE RESPUESTA
     // =============================================
 
@@ -185,8 +207,15 @@ public final class StrategyMetricsConstants {
     /** Mensaje para override manual limpiado */
     public static final String MSG_MANUAL_OVERRIDE_CLEARED = "Manual override cleared";
 
+    /** Mensaje para reconciliación completada */
+    public static final String MSG_RECONCILIATION_COMPLETED = "Reconciliation completed";
+
     /** Mensaje de error para estrategia nula */
     public static final String MSG_STRATEGY_NULL_ERROR = "Strategy cannot be null for manual override";
+
+    // =============================================
+    // MENSAJES DE LOG
+    // =============================================
 
     /** Mensaje de log para reconciliación forzada */
     public static final String MSG_FORCING_RECONCILIATION = "Forcing configuration reconciliation";
@@ -239,6 +268,17 @@ public final class StrategyMetricsConstants {
 
     /** Formato para mensaje de override establecido */
     public static final String FORMAT_OVERRIDE_SET = "Manual override set to: %s";
+
+    // =============================================
+    // RUTAS Y ARCHIVOS
+    // =============================================
+
+    /** Ruta por defecto del archivo de configuración */
+    public static final String DEFAULT_CONFIG_FILE_PATH = "/config/saga-strategy.conf";
+
+    // =============================================
+    // VALORES POR DEFECTO
+    // =============================================
 
     /** Valor por defecto para habilitar el gestor */
     public static final String DEFAULT_MANAGER_ENABLED = "true";

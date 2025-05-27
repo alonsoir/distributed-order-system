@@ -6,8 +6,20 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.example.order.config.StrategyMetricsConstants.*;
+
+/**
+ * Controller REST para gestión de estrategias de Saga.
+ *
+ * Proporciona endpoints para:
+ * - Consultar información de estrategias
+ * - Actualizar estrategias manualmente
+ * - Limpiar overrides manuales
+ * - Forzar reconciliación de configuración
+ * - Obtener estadísticas de uso
+ */
 @RestController
-@RequestMapping("/api/management/saga")
+@RequestMapping(API_BASE_PATH)
 public class StrategyManagementController {
 
     private final StrategyConfigurationManager configManager;
@@ -16,52 +28,52 @@ public class StrategyManagementController {
         this.configManager = configManager;
     }
 
-    @GetMapping("/strategy")
+    @GetMapping(ENDPOINT_STRATEGY)
     public ResponseEntity<Map<String, Object>> getStrategyInfo() {
         return ResponseEntity.ok(configManager.getStrategyInfo());
     }
 
-    @PostMapping("/strategy")
+    @PostMapping(ENDPOINT_STRATEGY)
     public ResponseEntity<Map<String, Object>> updateStrategy(
             @RequestBody Map<String, Object> request) {
 
-        String strategy = (String) request.get("strategy");
-        boolean override = Boolean.TRUE.equals(request.get("override"));
+        String strategy = (String) request.get(REQUEST_STRATEGY);
+        boolean override = Boolean.TRUE.equals(request.get(REQUEST_OVERRIDE));
 
         Map<String, Object> result = configManager.updateStrategy(strategy, override);
 
-        if ("error".equals(result.get("status"))) {
+        if (RESULT_ERROR.equals(result.get(JSON_STATUS))) {
             return ResponseEntity.badRequest().body(result);
         }
 
         return ResponseEntity.ok(result);
     }
 
-    @DeleteMapping("/strategy/override")
+    @DeleteMapping(ENDPOINT_STRATEGY_OVERRIDE)
     public ResponseEntity<Map<String, Object>> clearManualOverride() {
         configManager.clearManualOverride();
 
         Map<String, Object> result = new HashMap<>();
-        result.put("status", "success");
-        result.put("message", "Manual override cleared");
-        result.put("currentStrategy", configManager.getStrategyInfo().get("currentStrategy"));
+        result.put(JSON_STATUS, RESULT_SUCCESS);
+        result.put(JSON_MESSAGE, MSG_MANUAL_OVERRIDE_CLEARED);
+        result.put(JSON_CURRENT_STRATEGY, configManager.getStrategyInfo().get(JSON_CURRENT_STRATEGY));
 
         return ResponseEntity.ok(result);
     }
 
-    @PostMapping("/strategy/reconcile")
+    @PostMapping(ENDPOINT_STRATEGY_RECONCILE)
     public ResponseEntity<Map<String, Object>> forceReconciliation() {
         configManager.forceReconciliation();
 
         Map<String, Object> result = new HashMap<>();
-        result.put("status", "success");
-        result.put("message", "Reconciliation completed");
-        result.put("currentStrategy", configManager.getStrategyInfo().get("currentStrategy"));
+        result.put(JSON_STATUS, RESULT_SUCCESS);
+        result.put(JSON_MESSAGE, MSG_RECONCILIATION_COMPLETED);
+        result.put(JSON_CURRENT_STRATEGY, configManager.getStrategyInfo().get(JSON_CURRENT_STRATEGY));
 
         return ResponseEntity.ok(result);
     }
 
-    @GetMapping("/strategy/stats")
+    @GetMapping(ENDPOINT_STRATEGY_STATS)
     public ResponseEntity<Map<String, Object>> getStrategyStatistics() {
         return ResponseEntity.ok(configManager.getStrategyStatistics());
     }
