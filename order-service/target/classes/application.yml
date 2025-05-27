@@ -1,0 +1,76 @@
+spring:
+  r2dbc:
+    url: ${SPRING_R2DBC_URL:r2dbc:mysql://localhost:3306/orders}
+    username: ${SPRING_R2DBC_USERNAME:root}
+    password: ${SPRING_R2DBC_PASSWORD:root}
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+  sql:
+    init:
+      mode: ${SPRING_SQL_INIT_MODE:never}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+order:
+  service:
+    strategy:
+      default-strategy: atLeastOnce
+
+redis:
+  retry:
+    max-attempts: ${REDIS_RETRY_MAX_ATTEMPTS:3}
+    backoff:
+      seconds: ${REDIS_RETRY_BACKOFF_SECONDS:1}
+  stream:
+    min-size: ${REDIS_STREAM_MIN_SIZE:1000}
+    max-size: ${REDIS_STREAM_MAX_SIZE:10000}
+    default-size: ${REDIS_STREAM_DEFAULT_SIZE:5000}
+    trim:
+      interval: ${REDIS_STREAM_TRIM_INTERVAL:60000}
+
+outbox:
+  retry:
+    max-attempts: ${OUTBOX_RETRY_MAX_ATTEMPTS:3}
+    backoff:
+      seconds: ${OUTBOX_RETRY_BACKOFF_SECONDS:1}
+
+dlq:
+  retry:
+    max-attempts: ${DLQ_RETRY_MAX_ATTEMPTS:3}
+    backoff:
+      seconds: ${DLQ_RETRY_BACKOFF_SECONDS:1}
+  process:
+    interval: ${DLQ_PROCESS_INTERVAL:60000}
+
+event:
+  repository:
+    max-retries: 3
+    retry-backoff-millis: 100
+    operation-timeout-millis: 5000
+    enable-circuit-breaker: true
+    circuit-breaker-failure-threshold: 5
+    circuit-breaker-open-time-millis: 30000
+    verbose-logging: false
+    metrics-prefix: repository
+  persistence:
+    topics:
+      orders:
+        persistToDisk: ${EVENT_PERSISTENCE_ORDERS_PERSIST_TO_DISK:true}
+        importance: ${EVENT_PERSISTENCE_ORDERS_IMPORTANCE:HIGH}
+      other-topic:
+        persistToDisk: ${EVENT_PERSISTENCE_OTHER_TOPIC_PERSIST_TO_DISK:false}
+        importance: ${EVENT_PERSISTENCE_OTHER_TOPIC_IMPORTANCE:LOW}
+
+app:
+  id:
+    check-collisions: ${APP_ID_CHECK_COLLISIONS:false}
+  node-id: ${APP_NODE_ID:0}
+
+resilience4j:
+  fallback:
+    enabled: true
