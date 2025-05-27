@@ -10,7 +10,14 @@ import java.util.EnumSet;
 @Slf4j
 public class OrderStateMachine {
 
-    private static volatile OrderStateMachine staticInstance;
+    /**
+     * Thread-safe singleton holder using initialization-on-demand holder idiom.
+     * This pattern ensures thread safety without synchronization overhead.
+     */
+    private static class SingletonHolder {
+        private static final OrderStateMachine INSTANCE = new OrderStateMachine();
+    }
+
     private final Map<OrderStatus, Set<OrderStatus>> transitions;
     private final Map<String, String> topicMappings;
 
@@ -49,28 +56,22 @@ public class OrderStateMachine {
 
     /**
      * Método para obtener instancia estática (solo reglas) - DEPRECATED
+     * Thread-safe singleton usando initialization-on-demand holder idiom
      * @deprecated Use OrderStateMachineService instead
      */
     @Deprecated
     public static OrderStateMachine getInstance() {
-        if (staticInstance == null) {
-            synchronized (OrderStateMachine.class) {
-                if (staticInstance == null) {
-                    staticInstance = new OrderStateMachine();
-                }
-            }
-        }
-        return staticInstance;
+        return SingletonHolder.INSTANCE;
     }
 
     /**
-     * Método alternativo para facilitar testing - permite resetear la instancia
-     * SOLO USAR EN TESTS
+     * Método alternativo para facilitar testing
+     * Nota: Con el holder pattern, la instancia no se puede resetear.
+     * Para testing, se recomienda usar OrderStateMachineService o crear instancias nuevas.
      */
     public static void resetInstance() {
-        synchronized (OrderStateMachine.class) {
-            staticInstance = null;
-        }
+        log.warn("resetInstance() is not supported with initialization-on-demand holder pattern. " +
+                "Use OrderStateMachineService for testing or create new instances instead.");
     }
 
     /**
