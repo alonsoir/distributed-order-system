@@ -9,7 +9,6 @@ import org.springframework.context.annotation.Configuration;
  * desde la configuración del aplicativo.
  */
 @ConfigurationProperties(prefix = "event.repository")
-@Configuration
 public class EventRepositoryProperties {
 
     /**

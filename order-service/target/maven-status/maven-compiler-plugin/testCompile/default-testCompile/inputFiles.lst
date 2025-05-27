@@ -1,6 +1,7 @@
 /Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/actuator/StrategyConfigurationListenerTest.java
 /Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/actuator/StrategyConfigurationManagerTest.java
 /Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/actuator/cloud/CloudStrategyConfigurationPropertiesTest.java
+/Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/config/TestStrategyConfiguration.java
 /Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/domain/OrderStateMachineServiceTest.java
 /Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/domain/OrderStateMachineTest.java
 /Users/aironman/git/distributed-order-system/order-service/src/test/java/com/example/order/domain/OrderStatusTest.java

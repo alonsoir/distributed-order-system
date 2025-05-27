@@ -1,4 +1,5 @@
 com/example/order/domain/OrderStateMachineTest.class
+com/example/order/config/TestStrategyConfiguration.class
 com/example/order/repository/CompositeEventRepositorySimpleTest$1.class
 com/example/order/service/OrderStateMachineServiceTest.class
 com/example/order/service/util/TestAwareLogger.class

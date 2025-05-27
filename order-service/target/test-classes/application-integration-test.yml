@@ -49,6 +49,8 @@ resilience4j:
 order:
   service:
     strategy:
+      manager:
+        enabled: false
       default-strategy: atLeastOnce
 
 # Logging específico para tests

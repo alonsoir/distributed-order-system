@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
@@ -18,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
+@Primary  // ← AÑADIR ESTA LÍNEA
 public class DynamicOrderService extends AbstractOrderService implements OrderService {
     private static final Logger log = LoggerFactory.getLogger(DynamicOrderService.class);
 

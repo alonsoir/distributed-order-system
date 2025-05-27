@@ -1,12 +1,23 @@
 package com.example.order.repository;
 
+import com.example.order.OrderServiceApplication;
+import com.example.order.actuator.StrategyConfigurationListener;
+import com.example.order.actuator.StrategyConfigurationManager;
+import com.example.order.config.TestStrategyConfiguration;
 import com.example.order.domain.DeliveryMode;
 import com.example.order.repository.events.ProcessedEventRepository;
+import com.example.order.service.OrderService;
+import com.example.order.service.SagaOrchestrator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.ActiveProfiles;
 import reactor.core.publisher.Mono;
@@ -26,12 +37,34 @@ import static org.mockito.Mockito.*;
  *
  * Nota: Usa @MockitoBean (Spring Boot 3.4+) en lugar de @MockBean (deprecado)
  */
-@SpringBootTest
+@SpringBootTest(classes = {
+        OrderServiceApplication.class,
+        TestStrategyConfiguration.class
+}, webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("integration-test")
+@Import(TestStrategyConfiguration.class)
+
 public class CompositeEventRepositoryResilienceTest {
 
     @Autowired
-    private EventRepository eventRepository; // Inyectar la interfaz, Spring dará la implementación
+    private EventRepository eventRepository;
+
+    // Mock único para resolver el conflicto
+    @MockitoBean
+    @Qualifier("dynamicOrderService")
+    private OrderService orderService;
+
+    // Todos tus otros mocks...
+    @MockitoBean
+    private StrategyConfigurationManager strategyConfigurationManager;
+
+    @MockitoBean
+    @Qualifier("atLeastOnce")
+    private SagaOrchestrator mockAtLeastOnceSagaOrchestrator;
+
+    @MockitoBean
+    @Qualifier("sagaOrchestratorImpl2")
+    private SagaOrchestrator mockAtMostOnceSagaOrchestrator;
 
     @MockitoBean
     private ProcessedEventRepository processedEventRepository;
@@ -50,11 +83,9 @@ public class CompositeEventRepositoryResilienceTest {
 
     @BeforeEach
     void setUp() {
-        // Reset all mocks before each test
         reset(processedEventRepository, orderRepository, sagaFailureRepository,
                 eventHistoryRepository, transactionLockRepository);
     }
-
     @Test
     @DisplayName("Test de resiliencia: Debe reintentar operaciones tras fallos transitorios")
     void testRetryOnTransientFailures() {
