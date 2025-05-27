@@ -61,6 +61,7 @@ com/example/order/events/OrderCreatedEvent.class
 com/example/order/service/AbstractDLQManager$DLQConfig.class
 com/example/order/repository/base/ValidationUtils.class
 com/example/order/events/DefaultOrderEvent.class
+com/example/order/config/StrategyMetricsConstants.class
 com/example/order/repository/base/StoredProcedureDatabaseOperations.class
 com/example/order/config/RepositoryConfig.class
 com/example/order/service/InventoryService.class

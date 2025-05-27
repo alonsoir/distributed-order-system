@@ -142,8 +142,103 @@ public final class StrategyMetricsConstants {
     public static final String DEFAULT_CONFIG_FILE_PATH = "/config/saga-strategy.conf";
 
     // =============================================
-    // VALORES POR DEFECTO
+    // CLAVES DE RESPUESTA/INFO JSON
     // =============================================
+
+    /** Clave para estrategia actual en respuestas JSON */
+    public static final String JSON_CURRENT_STRATEGY = "currentStrategy";
+
+    /** Clave para estrategias disponibles en respuestas JSON */
+    public static final String JSON_AVAILABLE_STRATEGIES = "availableStrategies";
+
+    /** Clave para fuente activa en respuestas JSON */
+    public static final String JSON_ACTIVE_SOURCE = "activeSource";
+
+    /** Clave para override manual en respuestas JSON */
+    public static final String JSON_MANUAL_OVERRIDE = "manualOverride";
+
+    /** Clave para últimos cambios en respuestas JSON */
+    public static final String JSON_LAST_CHANGES = "lastChanges";
+
+    /** Clave para fuentes de configuración en respuestas JSON */
+    public static final String JSON_SOURCES = "sources";
+
+    /** Clave para estado de operación en respuestas JSON */
+    public static final String JSON_STATUS = "status";
+
+    /** Clave para mensaje de respuesta en respuestas JSON */
+    public static final String JSON_MESSAGE = "message";
+
+    /** Clave para indicar si hubo cambio en respuestas JSON */
+    public static final String JSON_CHANGED = "changed";
+
+    /** Clave para contador de cambios en respuestas JSON */
+    public static final String JSON_CHANGE_COUNT = "changeCount";
+
+    // =============================================
+    // MENSAJES DE RESPUESTA
+    // =============================================
+
+    /** Mensaje para override manual establecido */
+    public static final String MSG_MANUAL_OVERRIDE_SET = "Manual override set: ";
+
+    /** Mensaje para override manual limpiado */
+    public static final String MSG_MANUAL_OVERRIDE_CLEARED = "Manual override cleared";
+
+    /** Mensaje de error para estrategia nula */
+    public static final String MSG_STRATEGY_NULL_ERROR = "Strategy cannot be null for manual override";
+
+    /** Mensaje de log para reconciliación forzada */
+    public static final String MSG_FORCING_RECONCILIATION = "Forcing configuration reconciliation";
+
+    /** Mensaje de log para reconciliación periódica */
+    public static final String MSG_PERIODIC_RECONCILIATION = "Performing periodic configuration reconciliation";
+
+    /** Mensaje de log para contexto actualizado */
+    public static final String MSG_CONTEXT_REFRESHED = "Application context refreshed, updating configuration";
+
+    /** Mensaje de log para configuración cloud actualizada */
+    public static final String MSG_CLOUD_CONFIG_REFRESHED = "Cloud configuration refreshed, updating from environment";
+
+    /** Mensaje de log para manager inicializado */
+    public static final String MSG_MANAGER_INITIALIZED = "Strategy Configuration Manager initialized with strategy: {}";
+
+    /** Mensaje de log para establecer override manual */
+    public static final String MSG_SETTING_MANUAL_OVERRIDE = "Setting manual override strategy: {}";
+
+    /** Mensaje de log para limpiar override manual */
+    public static final String MSG_CLEARING_MANUAL_OVERRIDE = "Clearing manual override strategy";
+
+    /** Mensaje de log para cambio de estrategia */
+    public static final String MSG_STRATEGY_CHANGE = "Strategy change: {}";
+
+    /** Mensaje de log para error en fuentes de configuración */
+    public static final String MSG_ERROR_CONFIG_SOURCES = "Error updating configuration from sources";
+
+    /** Mensaje de log para error recolectando información */
+    public static final String MSG_ERROR_COLLECTING_INFO = "Error collecting source information";
+
+    /** Mensaje de log para error leyendo archivo de configuración */
+    public static final String MSG_ERROR_READING_CONFIG_FILE = "Error reading strategy from config file: {}";
+
+    /** Mensaje de log para intentar aplicar estrategia */
+    public static final String MSG_ATTEMPTING_APPLY_STRATEGY = "Attempting to apply strategy '{}' from source '{}'";
+
+    /** Mensaje de log para estrategia inválida */
+    public static final String MSG_INVALID_STRATEGY = "Invalid strategy '{}' from source '{}': {}";
+
+    // =============================================
+    // FORMATOS DE MENSAJES
+    // =============================================
+
+    /** Formato para mensaje de cambio de estrategia */
+    public static final String FORMAT_STRATEGY_CHANGED = "Strategy changed to '%s' from source '%s' (previous source: '%s')";
+
+    /** Formato para mensaje de override limpiado */
+    public static final String FORMAT_OVERRIDE_CLEARED = "Manual override cleared, was: %s";
+
+    /** Formato para mensaje de override establecido */
+    public static final String FORMAT_OVERRIDE_SET = "Manual override set to: %s";
 
     /** Valor por defecto para habilitar el gestor */
     public static final String DEFAULT_MANAGER_ENABLED = "true";
