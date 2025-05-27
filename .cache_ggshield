@@ -1,1 +1,1 @@
-{"last_found_secrets": [{"name": "Generic High Entropy Secret - commit://staged/output.txt", "match": "5e20caea379f061bdbbd4bcee571c4024da5267920d59cc59012bcd80998d090"}]}
+{"last_found_secrets": [{"match": "5e20caea379f061bdbbd4bcee571c4024da5267920d59cc59012bcd80998d090", "name": "Generic High Entropy Secret - commit://staged/activate-sonarqube.sh"}]}

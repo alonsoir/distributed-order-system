@@ -1,3 +1,5 @@
+#!/bin/zsh
+
 mvn clean verify sonar:sonar \
   -Dsonar.projectKey=distributed-order-system \
   -Dsonar.projectName='distributed-order-system' \
