@@ -1,6 +1,6 @@
--- order-service/src/main/docker/mysql-init/orders.sql
--- Esquema unificado para contenedor Docker (MySQL/MariaDB)
--- Soporta ambas estrategias: AT LEAST ONCE y AT MOST ONCE
+-- order-service/src/test/resources/schema-tables.sql
+-- Esquema simplificado para tests de integración
+-- Solo tablas - los procedimientos se crean en @BeforeAll
 
 -- Desactivar verificación de claves foráneas durante la inicialización
 SET FOREIGN_KEY_CHECKS = 0;
@@ -150,101 +150,12 @@ CREATE TABLE IF NOT EXISTS transaction_locks (
     locked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP,
     released BOOLEAN DEFAULT false,
-    UNIQUE KEY unique_resource_and_lock (resource_id, lock_uuid),  -- Cambio aquí: ahora la combinación es única
+    UNIQUE KEY unique_resource_and_lock (resource_id, lock_uuid),
     INDEX idx_correlation_id (correlation_id),
     INDEX idx_expires_at (expires_at),
     INDEX idx_lock_uuid (lock_uuid),
-    INDEX idx_resource_id (resource_id)  -- Añadido índice separado para resource_id ya que ya no es único
+    INDEX idx_resource_id (resource_id)
 );
-
--- Procedimientos almacenados para ambos modos
-DELIMITER //
-
--- Para AT LEAST ONCE: Inserción en outbox
-DROP PROCEDURE IF EXISTS insert_outbox //
-CREATE PROCEDURE insert_outbox(
-    IN p_event_type VARCHAR(50),
-    IN p_correlation_id VARCHAR(36),
-    IN p_event_id VARCHAR(36),
-    IN p_payload TEXT
-)
-BEGIN
-    -- Compatibilidad con el procedimiento existente
-    DECLARE v_topic VARCHAR(255);
-    SET v_topic = CONCAT('order.', LOWER(p_event_type));
-
-    INSERT INTO outbox (event_type, correlation_id, event_id, payload, topic, delivery_mode)
-    VALUES (p_event_type, p_correlation_id, p_event_id, p_payload, v_topic, 'AT_LEAST_ONCE');
-END //
-
--- Para AT MOST ONCE: Gestión de locks
-DROP PROCEDURE IF EXISTS try_acquire_lock //
-CREATE PROCEDURE try_acquire_lock(
-    IN p_resource_id VARCHAR(100),
-    IN p_correlation_id VARCHAR(36),
-    IN p_lock_timeout_seconds INT,
-    IN p_lock_uuid VARCHAR(36),
-    OUT p_acquired BOOLEAN
-)
-BEGIN
-    DECLARE lock_count INT;
-
-    START TRANSACTION;
-
-    -- Verificar si el recurso ya está bloqueado
-    -- Nota: ahora verificamos si el recurso específico está bloqueado,
-    -- pero permitimos bloqueos múltiples con diferentes UUIDs
-    SELECT COUNT(*) INTO lock_count
-    FROM transaction_locks
-    WHERE resource_id = p_resource_id AND
-          (released = false AND expires_at > NOW()) AND
-          lock_uuid = p_lock_uuid  -- Verificar solo para este UUID específico
-    FOR UPDATE;
-
-    IF lock_count = 0 THEN
-        -- El recurso está disponible o ya tiene otros bloqueos con diferentes UUIDs
-        INSERT INTO transaction_locks (resource_id, correlation_id, lock_uuid, locked_at, expires_at)
-        VALUES (p_resource_id, p_correlation_id, p_lock_uuid, NOW(), DATE_ADD(NOW(), INTERVAL p_lock_timeout_seconds SECOND));
-
-        SET p_acquired = true;
-    ELSE
-        -- El recurso ya está bloqueado con este UUID
-        SET p_acquired = false;
-    END IF;
-
-    COMMIT;
-END //
-
--- Para AT MOST ONCE: Liberación de lock
-DROP PROCEDURE IF EXISTS release_lock //
-CREATE PROCEDURE release_lock(
-    IN p_resource_id VARCHAR(100),
-    IN p_correlation_id VARCHAR(36),
-    IN p_lock_uuid VARCHAR(36)
-)
-BEGIN
-    UPDATE transaction_locks
-    SET released = true
-    WHERE resource_id = p_resource_id
-    AND correlation_id = p_correlation_id
-    AND lock_uuid = p_lock_uuid;
-END //
-
--- Actualización del procedimiento insert_outbox para compatibilidad con la versión anterior
-DROP PROCEDURE IF EXISTS insert_outbox_legacy //
-CREATE PROCEDURE insert_outbox_legacy(
-    IN p_event_type VARCHAR(50),
-    IN p_correlation_id VARCHAR(36),
-    IN p_event_id VARCHAR(36),
-    IN p_payload TEXT,
-    IN p_topic VARCHAR(255)
-)
-BEGIN
-    INSERT INTO outbox (event_type, correlation_id, event_id, payload, topic, created_at)
-    VALUES (p_event_type, p_correlation_id, p_event_id, p_payload, p_topic, NOW());
-END //
-
-DELIMITER ;
 
 -- Restaurar verificación de claves foráneas
 SET FOREIGN_KEY_CHECKS = 1;

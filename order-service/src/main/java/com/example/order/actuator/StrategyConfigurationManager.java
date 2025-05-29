@@ -1,5 +1,6 @@
 package com.example.order.actuator;
 
+import com.example.order.config.StrategyMetricsConstants;
 import com.example.order.service.DynamicOrderService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
@@ -34,6 +35,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.example.order.config.StrategyMetricsConstants.*;
+
 /**
  * Gestor centralizado para la configuración de estrategias de Saga.
  *
@@ -54,16 +57,9 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 @Component
 @Endpoint(id = "saga-strategy")
-@ConditionalOnProperty(name = "order.service.strategy.manager.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = PROP_MANAGER_ENABLED, havingValue = DEFAULT_MANAGER_ENABLED, matchIfMissing = true)
 public class StrategyConfigurationManager implements InitializingBean {
     private static final Logger log = LoggerFactory.getLogger(StrategyConfigurationManager.class);
-
-    // Claves de configuración
-    private static final String PROP_DEFAULT_STRATEGY = "order.service.strategy.default-strategy";
-    private static final String CONFIG_FILE_PATH = "/config/saga-strategy.conf";
-    private static final String STRATEGY_SOURCE_METRIC = "order.strategy.source";
-    private static final String STRATEGY_CHANGE_METRIC = "order.strategy.changes";
-    private static final String STRATEGY_DETECTION_METRIC = "order.strategy.detection.time";
 
     // Servicios principales
     private final DynamicOrderService orderService;
@@ -78,22 +74,22 @@ public class StrategyConfigurationManager implements InitializingBean {
     private final AtomicReference<String> manualOverrideStrategy = new AtomicReference<>();
     private final Set<String> knownSources = ConcurrentHashMap.newKeySet();
 
-    @Value("${order.service.strategy.manager.config-file:#{null}}")
+    @Value("${" + PROP_CONFIG_FILE + ":#{null}}")
     private String configFilePath;
 
-    @Value("${order.service.strategy.manager.enable-cloud-events:true}")
+    @Value("${" + PROP_ENABLE_CLOUD_EVENTS + ":" + DEFAULT_ENABLE_CLOUD_EVENTS + "}")
     private boolean enableCloudEvents;
 
-    @Value("${order.service.strategy.manager.reconciliation-interval-ms:60000}")
+    @Value("${" + PROP_RECONCILIATION_INTERVAL + ":" + DEFAULT_RECONCILIATION_INTERVAL + "}")
     private long reconciliationIntervalMs;
 
     // Enumeración para prioridad de fuentes
     private enum SourcePriority {
-        MANUAL(0, "manual"),
-        ENVIRONMENT(1, "environment"),
-        KUBERNETES(2, "kubernetes"),
-        FILE(3, "file"),
-        NONE(99, "none");
+        MANUAL(0, SOURCE_MANUAL),
+        ENVIRONMENT(1, SOURCE_ENVIRONMENT),
+        KUBERNETES(2, SOURCE_KUBERNETES),
+        FILE(3, SOURCE_FILE),
+        NONE(99, SOURCE_NONE);
 
         private final int priority;
         private final String label;
@@ -125,8 +121,8 @@ public class StrategyConfigurationManager implements InitializingBean {
         this.applicationContext = applicationContext;
 
         // Inicializar métricas de gauge
-        meterRegistry.gauge("order.strategy.active",
-                Tags.of(Tag.of("strategy", "unknown")),
+        meterRegistry.gauge(METRIC_STRATEGY_ACTIVE,
+                Tags.of(Tag.of(TAG_STRATEGY, STRATEGY_UNKNOWN)),
                 this,
                 manager -> manager.getActiveStrategyValue());
     }
@@ -134,56 +130,58 @@ public class StrategyConfigurationManager implements InitializingBean {
     @Override
     public void afterPropertiesSet() {
         // Inicializar todas las fuentes conocidas
-        knownSources.add(SourcePriority.MANUAL.getLabel());
-        knownSources.add(SourcePriority.ENVIRONMENT.getLabel());
-        knownSources.add(SourcePriority.KUBERNETES.getLabel());
-        knownSources.add(SourcePriority.FILE.getLabel());
+        knownSources.add(SOURCE_MANUAL);
+        knownSources.add(SOURCE_ENVIRONMENT);
+        knownSources.add(SOURCE_KUBERNETES);
+        knownSources.add(SOURCE_FILE);
 
         // Establecer estado inicial usando la configuración disponible
         updateConfigurationFromAllSources();
-        log.info("Strategy Configuration Manager initialized with strategy: {}",
+        log.info(MSG_MANAGER_INITIALIZED,
                 orderService.getDefaultStrategy());
 
         // Inicializar métricas para cada fuente conocida
         for (String source : knownSources) {
-            meterRegistry.counter(STRATEGY_SOURCE_METRIC, "source", source);
+            meterRegistry.counter(METRIC_STRATEGY_SOURCE, TAG_SOURCE, source);
         }
     }
 
     /**
      * Actualización programada para reconciliar configuraciones de todas las fuentes.
-     * Esto garantiza que incluso si se perdió algún evento de cambio, la configuración
-     * eventualmente se actualice.
      */
-    @Scheduled(fixedDelayString = "${order.service.strategy.manager.check-interval:30000}")
+    @Scheduled(fixedDelayString = "${" + PROP_CHECK_INTERVAL + ":" + DEFAULT_CHECK_INTERVAL + "}")
     public void updateConfigurationFromAllSources() {
         Timer.Sample timer = Timer.start(meterRegistry);
 
         try {
             // Primero verificar override manual (mayor prioridad)
             if (updateFromManualOverride()) {
-                timer.stop(meterRegistry.timer(STRATEGY_DETECTION_METRIC, "source", "manual", "result", "applied"));
+                timer.stop(meterRegistry.timer(METRIC_STRATEGY_DETECTION_TIME,
+                        TAG_SOURCE, SOURCE_MANUAL, TAG_RESULT, RESULT_APPLIED));
                 return;
             }
 
             // Luego verificar propiedades/variables de entorno
             if (updateFromEnvironment()) {
-                timer.stop(meterRegistry.timer(STRATEGY_DETECTION_METRIC, "source", "environment", "result", "applied"));
+                timer.stop(meterRegistry.timer(METRIC_STRATEGY_DETECTION_TIME,
+                        TAG_SOURCE, SOURCE_ENVIRONMENT, TAG_RESULT, RESULT_APPLIED));
                 return;
             }
 
             // Finalmente verificar archivos de configuración (menor prioridad)
             if (updateFromConfigFile()) {
-                timer.stop(meterRegistry.timer(STRATEGY_DETECTION_METRIC, "source", "file", "result", "applied"));
+                timer.stop(meterRegistry.timer(METRIC_STRATEGY_DETECTION_TIME,
+                        TAG_SOURCE, SOURCE_FILE, TAG_RESULT, RESULT_APPLIED));
                 return;
             }
 
             // Si no se encontró ninguna configuración
-            timer.stop(meterRegistry.timer(STRATEGY_DETECTION_METRIC, "source", "none", "result", "no_change"));
+            timer.stop(meterRegistry.timer(METRIC_STRATEGY_DETECTION_TIME,
+                    TAG_SOURCE, SOURCE_NONE, TAG_RESULT, RESULT_NO_CHANGE));
         } catch (Exception e) {
-            log.error("Error updating configuration from sources", e);
-            timer.stop(meterRegistry.timer(STRATEGY_DETECTION_METRIC, "result", "error"));
-            meterRegistry.counter("order.strategy.errors", "type", e.getClass().getSimpleName()).increment();
+            log.error(MSG_ERROR_CONFIG_SOURCES, e);
+            timer.stop(meterRegistry.timer(METRIC_STRATEGY_DETECTION_TIME, TAG_RESULT, RESULT_ERROR));
+            meterRegistry.counter(METRIC_STRATEGY_ERRORS, TAG_ERROR_TYPE, e.getClass().getSimpleName()).increment();
         }
     }
 
@@ -193,18 +191,18 @@ public class StrategyConfigurationManager implements InitializingBean {
     @EventListener
     public void handleConfigurationEvent(ApplicationEvent event) {
         if (event instanceof ContextRefreshedEvent) {
-            log.info("Application context refreshed, updating configuration");
+            log.info(MSG_CONTEXT_REFRESHED);
             updateConfigurationFromAllSources();
         } else if (enableCloudEvents && (event instanceof RefreshScopeRefreshedEvent ||
                 event instanceof EnvironmentChangeEvent)) {
-            log.info("Cloud configuration refreshed, updating from environment");
+            log.info(MSG_CLOUD_CONFIG_REFRESHED);
             Timer.Sample timer = Timer.start(meterRegistry);
             if (updateFromEnvironment()) {
-                timer.stop(meterRegistry.timer(STRATEGY_DETECTION_METRIC,
-                        "source", "cloud_event", "result", "applied"));
+                timer.stop(meterRegistry.timer(METRIC_STRATEGY_DETECTION_TIME,
+                        TAG_SOURCE, SOURCE_CLOUD_EVENT, TAG_RESULT, RESULT_APPLIED));
             } else {
-                timer.stop(meterRegistry.timer(STRATEGY_DETECTION_METRIC,
-                        "source", "cloud_event", "result", "no_change"));
+                timer.stop(meterRegistry.timer(METRIC_STRATEGY_DETECTION_TIME,
+                        TAG_SOURCE, SOURCE_CLOUD_EVENT, TAG_RESULT, RESULT_NO_CHANGE));
             }
         }
     }
@@ -215,22 +213,22 @@ public class StrategyConfigurationManager implements InitializingBean {
     @ReadOperation
     public Map<String, Object> getStrategyInfo() {
         Map<String, Object> info = new HashMap<>();
-        info.put("currentStrategy", orderService.getDefaultStrategy());
-        info.put("availableStrategies", orderService.getAvailableStrategies());
-        info.put("activeSource", lastActiveSource.get().getLabel());
-        info.put("manualOverride", manualOverrideStrategy.get() != null);
-        info.put("lastChanges", getLimitedAuditLog(10));
+        info.put(JSON_CURRENT_STRATEGY, orderService.getDefaultStrategy());
+        info.put(JSON_AVAILABLE_STRATEGIES, orderService.getAvailableStrategies());
+        info.put(JSON_ACTIVE_SOURCE, lastActiveSource.get().getLabel());
+        info.put(JSON_MANUAL_OVERRIDE, manualOverrideStrategy.get() != null);
+        info.put(JSON_LAST_CHANGES, getLimitedAuditLog(DEFAULT_AUDIT_LOG_LIMIT));
 
         // Añadir información de todas las fuentes
         Map<String, String> sources = new HashMap<>();
         try {
-            sources.put("environment", getEnvironmentStrategy());
-            sources.put("file", getFileStrategy());
-            sources.put("manual", manualOverrideStrategy.get());
+            sources.put(SOURCE_ENVIRONMENT, getEnvironmentStrategy());
+            sources.put(SOURCE_FILE, getFileStrategy());
+            sources.put(SOURCE_MANUAL, manualOverrideStrategy.get());
         } catch (Exception e) {
-            log.warn("Error collecting source information", e);
+            log.warn(MSG_ERROR_COLLECTING_INFO, e);
         }
-        info.put("sources", sources);
+        info.put(JSON_SOURCES, sources);
 
         return info;
     }
@@ -246,28 +244,28 @@ public class StrategyConfigurationManager implements InitializingBean {
             if (override) {
                 // Establecer override manual (mayor prioridad)
                 setManualOverride(strategy);
-                result.put("status", "success");
-                result.put("message", "Manual override set: " + strategy);
+                result.put(JSON_STATUS, RESULT_SUCCESS);
+                result.put(JSON_MESSAGE, MSG_MANUAL_OVERRIDE_SET + strategy);
             } else if (strategy == null) {
                 // Limpiar override manual
                 clearManualOverride();
-                result.put("status", "success");
-                result.put("message", "Manual override cleared");
+                result.put(JSON_STATUS, RESULT_SUCCESS);
+                result.put(JSON_MESSAGE, MSG_MANUAL_OVERRIDE_CLEARED);
             } else {
                 // Cambio normal sin override
                 boolean changed = applyStrategy(strategy, SourcePriority.MANUAL);
-                result.put("status", "success");
-                result.put("changed", changed);
-                result.put("strategy", strategy);
+                result.put(JSON_STATUS, RESULT_SUCCESS);
+                result.put(JSON_CHANGED, changed);
+                result.put(TAG_STRATEGY, strategy);
             }
         } catch (IllegalArgumentException e) {
-            result.put("status", "error");
-            result.put("message", e.getMessage());
+            result.put(JSON_STATUS, RESULT_ERROR);
+            result.put(JSON_MESSAGE, e.getMessage());
         }
 
         // Añadir información actual
-        result.put("currentStrategy", orderService.getDefaultStrategy());
-        result.put("activeSource", lastActiveSource.get().getLabel());
+        result.put(JSON_CURRENT_STRATEGY, orderService.getDefaultStrategy());
+        result.put(JSON_ACTIVE_SOURCE, lastActiveSource.get().getLabel());
 
         return result;
     }
@@ -277,18 +275,18 @@ public class StrategyConfigurationManager implements InitializingBean {
      */
     public void setManualOverride(String strategy) {
         if (strategy == null) {
-            throw new IllegalArgumentException("Strategy cannot be null for manual override");
+            throw new IllegalArgumentException(MSG_STRATEGY_NULL_ERROR);
         }
 
-        log.info("Setting manual override strategy: {}", strategy);
+        log.info(MSG_SETTING_MANUAL_OVERRIDE, strategy);
         manualOverrideStrategy.set(strategy);
         boolean applied = applyStrategy(strategy, SourcePriority.MANUAL);
 
         if (applied) {
-            logStrategyChange("Manual override set to: " + strategy);
-            meterRegistry.counter(STRATEGY_CHANGE_METRIC,
-                    "source", "manual_override",
-                    "strategy", strategy).increment();
+            logStrategyChange(String.format(FORMAT_OVERRIDE_SET, strategy));
+            meterRegistry.counter(METRIC_STRATEGY_CHANGES,
+                    TAG_SOURCE, SOURCE_MANUAL_OVERRIDE,
+                    TAG_STRATEGY, strategy).increment();
         }
     }
 
@@ -296,15 +294,15 @@ public class StrategyConfigurationManager implements InitializingBean {
      * Limpia el override manual, permitiendo que otras fuentes determinen la estrategia
      */
     public void clearManualOverride() {
-        log.info("Clearing manual override strategy");
+        log.info(MSG_CLEARING_MANUAL_OVERRIDE);
         String previous = manualOverrideStrategy.getAndSet(null);
 
         if (previous != null) {
             // Registrar el cambio
-            logStrategyChange("Manual override cleared, was: " + previous);
-            meterRegistry.counter(STRATEGY_CHANGE_METRIC,
-                    "source", "manual_override_clear",
-                    "previous", previous).increment();
+            logStrategyChange(String.format(FORMAT_OVERRIDE_CLEARED, previous));
+            meterRegistry.counter(METRIC_STRATEGY_CHANGES,
+                    TAG_SOURCE, SOURCE_MANUAL_OVERRIDE_CLEAR,
+                    TAG_PREVIOUS, previous).increment();
 
             // Actualizar desde otras fuentes
             updateConfigurationFromAllSources();
@@ -313,7 +311,6 @@ public class StrategyConfigurationManager implements InitializingBean {
 
     /**
      * Intenta actualizar la configuración desde override manual
-     * @return true si se aplicó un cambio
      */
     private boolean updateFromManualOverride() {
         String manualStrategy = manualOverrideStrategy.get();
@@ -325,7 +322,6 @@ public class StrategyConfigurationManager implements InitializingBean {
 
     /**
      * Intenta actualizar la configuración desde variables de entorno/propiedades
-     * @return true si se aplicó un cambio
      */
     private boolean updateFromEnvironment() {
         String envStrategy = getEnvironmentStrategy();
@@ -337,7 +333,6 @@ public class StrategyConfigurationManager implements InitializingBean {
 
     /**
      * Intenta actualizar la configuración desde archivo
-     * @return true si se aplicó un cambio
      */
     private boolean updateFromConfigFile() {
         try {
@@ -346,8 +341,8 @@ public class StrategyConfigurationManager implements InitializingBean {
                 return applyStrategy(fileStrategy, SourcePriority.FILE);
             }
         } catch (IOException e) {
-            log.warn("Error reading strategy from config file: {}", e.getMessage());
-            meterRegistry.counter("order.strategy.file.errors").increment();
+            log.warn(MSG_ERROR_READING_CONFIG_FILE, e.getMessage());
+            meterRegistry.counter(METRIC_STRATEGY_FILE_ERRORS).increment();
         }
         return false;
     }
@@ -363,7 +358,7 @@ public class StrategyConfigurationManager implements InitializingBean {
      * Obtiene la estrategia desde archivo de configuración
      */
     private String getFileStrategy() throws IOException {
-        String path = configFilePath != null ? configFilePath : CONFIG_FILE_PATH;
+        String path = configFilePath != null ? configFilePath : DEFAULT_CONFIG_FILE_PATH;
         Path configFile = Paths.get(path);
         if (Files.exists(configFile)) {
             return Files.readString(configFile).trim();
@@ -373,7 +368,6 @@ public class StrategyConfigurationManager implements InitializingBean {
 
     /**
      * Aplica una estrategia si tiene prioridad suficiente y es válida
-     * @return true si se aplicó un cambio
      */
     private boolean applyStrategy(String strategy, SourcePriority source) {
         // Verificar si la fuente tiene suficiente prioridad
@@ -381,23 +375,22 @@ public class StrategyConfigurationManager implements InitializingBean {
                 (source == lastActiveSource.get() && !strategy.equals(orderService.getDefaultStrategy()))) {
 
             try {
-                log.debug("Attempting to apply strategy '{}' from source '{}'", strategy, source.getLabel());
+                log.debug(MSG_ATTEMPTING_APPLY_STRATEGY, strategy, source.getLabel());
                 boolean changed = orderService.setDefaultStrategy(strategy);
 
                 if (changed) {
                     // Actualizar fuente activa y registrar el cambio
                     SourcePriority previousSource = lastActiveSource.getAndSet(source);
 
-                    logStrategyChange(String.format("Strategy changed to '%s' from source '%s' (previous source: '%s')",
+                    logStrategyChange(String.format(FORMAT_STRATEGY_CHANGED,
                             strategy, source.getLabel(), previousSource.getLabel()));
 
                     // Actualizar métricas
-                    meterRegistry.counter(STRATEGY_SOURCE_METRIC,
-                            "source", source.getLabel()).increment();
+                    meterRegistry.counter(METRIC_STRATEGY_SOURCE, TAG_SOURCE, source.getLabel()).increment();
 
-                    meterRegistry.counter(STRATEGY_CHANGE_METRIC,
-                            "source", source.getLabel(),
-                            "strategy", strategy).increment();
+                    meterRegistry.counter(METRIC_STRATEGY_CHANGES,
+                            TAG_SOURCE, source.getLabel(),
+                            TAG_STRATEGY, strategy).increment();
 
                     // Actualizar métricas de gauge
                     updateStrategyGauges(strategy);
@@ -405,11 +398,11 @@ public class StrategyConfigurationManager implements InitializingBean {
                     return true;
                 }
             } catch (IllegalArgumentException e) {
-                log.warn("Invalid strategy '{}' from source '{}': {}",
+                log.warn(MSG_INVALID_STRATEGY,
                         strategy, source.getLabel(), e.getMessage());
-                meterRegistry.counter("order.strategy.invalid",
-                        "source", source.getLabel(),
-                        "strategy", strategy).increment();
+                meterRegistry.counter(METRIC_STRATEGY_INVALID,
+                        TAG_SOURCE, source.getLabel(),
+                        TAG_STRATEGY, strategy).increment();
             }
         }
         return false;
@@ -421,7 +414,7 @@ public class StrategyConfigurationManager implements InitializingBean {
     private void updateStrategyGauges(String strategy) {
         // Actualizar gauges para cada tipo de estrategia
         for (String availableStrategy : orderService.getAvailableStrategies()) {
-            meterRegistry.gauge("order.strategy.active." + availableStrategy,
+            meterRegistry.gauge(METRIC_STRATEGY_ACTIVE + "." + availableStrategy,
                     this,
                     manager -> availableStrategy.equals(strategy) ? 1 : 0);
         }
@@ -432,9 +425,9 @@ public class StrategyConfigurationManager implements InitializingBean {
      */
     private double getActiveStrategyValue() {
         switch (orderService.getDefaultStrategy()) {
-            case "atLeastOnce":
+            case STRATEGY_AT_LEAST_ONCE:
                 return 1.0;
-            case "atMostOnce":
+            case STRATEGY_AT_MOST_ONCE:
                 return 2.0;
             default:
                 return 0.0;
@@ -447,16 +440,16 @@ public class StrategyConfigurationManager implements InitializingBean {
     private void logStrategyChange(String message) {
         String timestamp = Instant.now().toString();
         auditLog.put(timestamp, message);
-        log.info("Strategy change: {}", message);
+        log.info(MSG_STRATEGY_CHANGE, message);
 
         // Si hay muchas entradas en el log, eliminar algunas antiguas
-        if (auditLog.size() > 100) {
+        if (auditLog.size() > MAX_AUDIT_LOG_ENTRIES) {
             List<String> keys = new ArrayList<>(auditLog.keySet());
             keys.sort(String::compareTo);
 
-            // Eliminar las 20 entradas más antiguas
+            // Eliminar las entradas más antiguas
             keys.stream()
-                    .limit(20)
+                    .limit(AUDIT_LOG_CLEANUP_COUNT)
                     .forEach(auditLog::remove);
         }
     }
@@ -481,10 +474,10 @@ public class StrategyConfigurationManager implements InitializingBean {
      */
     public Map<String, Object> getStrategyStatistics() {
         Map<String, Object> stats = new HashMap<>();
-        stats.put("currentStrategy", orderService.getDefaultStrategy());
-        stats.put("activeSource", lastActiveSource.get().getLabel());
-        stats.put("availableStrategies", orderService.getAvailableStrategies());
-        stats.put("changeCount", auditLog.size());
+        stats.put(JSON_CURRENT_STRATEGY, orderService.getDefaultStrategy());
+        stats.put(JSON_ACTIVE_SOURCE, lastActiveSource.get().getLabel());
+        stats.put(JSON_AVAILABLE_STRATEGIES, orderService.getAvailableStrategies());
+        stats.put(JSON_CHANGE_COUNT, auditLog.size());
         return stats;
     }
 
@@ -492,7 +485,7 @@ public class StrategyConfigurationManager implements InitializingBean {
      * Fuerza una reconciliación completa de la configuración
      */
     public void forceReconciliation() {
-        log.info("Forcing configuration reconciliation");
+        log.info(MSG_FORCING_RECONCILIATION);
         // Establecer fuente como NONE para permitir que cualquier fuente sea considerada
         lastActiveSource.set(SourcePriority.NONE);
         updateConfigurationFromAllSources();
@@ -501,13 +494,12 @@ public class StrategyConfigurationManager implements InitializingBean {
     /**
      * Programa reconciliación periódica para alta disponibilidad
      */
-    @Scheduled(fixedDelayString = "${order.service.strategy.manager.reconciliation-interval-ms:60000}")
+    @Scheduled(fixedDelayString = "${" + PROP_RECONCILIATION_INTERVAL + ":" + DEFAULT_RECONCILIATION_INTERVAL + "}")
     public void periodicReconciliation() {
         // Solo hacer reconciliación si ha pasado suficiente tiempo desde el último cambio
-        // para evitar oscilaciones en la configuración
         if (Duration.between(Instant.now(),
                 Instant.parse(getLatestChangeTimestamp())).toMillis() > reconciliationIntervalMs) {
-            log.debug("Performing periodic configuration reconciliation");
+            log.debug(MSG_PERIODIC_RECONCILIATION);
             forceReconciliation();
         }
     }

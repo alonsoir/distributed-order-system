@@ -24,7 +24,6 @@ public class DynamicOrderService extends AbstractOrderService implements OrderSe
     private static final Logger log = LoggerFactory.getLogger(DynamicOrderService.class);
 
     private final Map<String, SagaOrchestrator> orchestratorStrategies;
-    private final MeterRegistry meterRegistry;
 
     // Usamos AtomicReference para garantizar thread-safety
     private final AtomicReference<String> defaultStrategyRef = new AtomicReference<>("atLeastOnce");
@@ -35,7 +34,6 @@ public class DynamicOrderService extends AbstractOrderService implements OrderSe
             @Qualifier("atLeastOnce") SagaOrchestrator atLeastOnceOrchestrator,
             @Qualifier("sagaOrchestratorImpl2") SagaOrchestrator atMostOnceOrchestrator) {
         super(circuitBreakerRegistry, meterRegistry);
-        this.meterRegistry = meterRegistry;
 
         // Inicializar mapa de estrategias
         this.orchestratorStrategies = new ConcurrentHashMap<>();  // Thread-safe map
