@@ -30,7 +30,7 @@ import static org.mockito.Mockito.*;
  * con los flujos de saga y orquestadores reales.
  */
 @SpringBootTest
-@ActiveProfiles("test")
+@ActiveProfiles("integration-test") // Changed from "test" to "integration-test"
 @Import(CompositeEventRepository.class) // Importar explícitamente la clase bajo prueba
 public class CompositeEventRepositorySagaIntegrationTest {
 

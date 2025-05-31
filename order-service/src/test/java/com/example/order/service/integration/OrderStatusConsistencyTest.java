@@ -20,7 +20,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @SpringBootTest
-@ActiveProfiles("integration")
+@ActiveProfiles("integration-test") // Changed from "integration" to "integration-test"
 class OrderStatusConsistencyTest {
 
     @Autowired

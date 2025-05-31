@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @SpringBootTest
 @Testcontainers
-@ActiveProfiles("integration")
+@ActiveProfiles("integration-test") // Changed from "integration" to "integration-test"
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CompensationManagerIntegrationTest {
 

@@ -1,6 +1,9 @@
 package com.example.order.repository;
 
 import com.example.order.OrderServiceApplication;
+import com.example.order.config.DatabaseConfig; // Added
+import com.example.order.config.EventRepositoryConfig; // Added
+import com.example.order.config.ResilienceConfig; // Added
 import com.example.order.actuator.StrategyConfigurationListener;
 import com.example.order.actuator.StrategyConfigurationManager;
 import com.example.order.config.TestStrategyConfiguration;
@@ -8,6 +11,10 @@ import com.example.order.domain.DeliveryMode;
 import com.example.order.repository.events.ProcessedEventRepository;
 import com.example.order.service.OrderService;
 import com.example.order.service.SagaOrchestrator;
+import org.springframework.boot.test.context.TestConfiguration; // Added
+import org.springframework.context.annotation.Bean; // Added
+import org.springframework.context.annotation.Import; // Added
+import org.springframework.context.annotation.Primary; // Added
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

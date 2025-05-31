@@ -114,6 +114,9 @@ public class CompositeEventRepositoryIntegrationTest {
         EventHistoryRepository eventHistoryRepository = mock(EventHistoryRepository.class);
         TransactionLockRepository transactionLockRepository = mock(TransactionLockRepository.class);
 
+        // Disable internal retries for ProcessedEventRepository during tests
+        processedEventRepository.setInternalRetryEnabled(false);
+
         // Inicializar el repositorio compuesto con todos los parámetros requeridos
         compositeEventRepository = new CompositeEventRepository(
                 meterRegistry,                      // Parámetro 1: MeterRegistry

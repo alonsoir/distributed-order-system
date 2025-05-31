@@ -1,0 +1,133 @@
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  r2dbc:
+    url: ${SPRING_R2DBC_URL:r2dbc:mysql://localhost:3306/orders}
+    username: ${SPRING_R2DBC_USERNAME:root}
+    password: ${SPRING_R2DBC_PASSWORD:root}
+    pool:
+      initial-size: 5
+      max-size: 10
+      max-idle-time: 30m
+      validation-query: SELECT 1
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+  sql:
+    init:
+      mode: never # No es necesario porque el esquema se inicializa con el script del contenedor
+  cloud:
+    discovery:
+      enabled: false
+    service-registry:
+      auto-registration:
+        enabled: false
+    config:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health
+    # Agregar esto para evitar problemas:
+    enabled-by-default: false
+  endpoint:
+    health:
+      enabled: true
+    prometheus:
+      enabled: true
+
+order:
+  service:
+    strategy:
+      default-strategy: atLeastOnce
+
+redis:
+  retry:
+    max-attempts: ${REDIS_RETRY_MAX_ATTEMPTS:3}
+    backoff:
+      seconds: ${REDIS_RETRY_BACKOFF_SECONDS:1}
+  stream:
+    min-size: ${REDIS_STREAM_MIN_SIZE:100}
+    max-size: ${REDIS_STREAM_MAX_SIZE:1000}
+    default-size: ${REDIS_STREAM_DEFAULT_SIZE:500}
+    trim:
+      interval: ${REDIS_STREAM_TRIM_INTERVAL:10000}
+
+outbox:
+  retry:
+    max-attempts: ${OUTBOX_RETRY_MAX_ATTEMPTS:3}
+    backoff:
+      seconds: ${OUTBOX_RETRY_BACKOFF_SECONDS:1}
+
+dlq:
+  retry:
+    max-attempts: ${DLQ_RETRY_MAX_ATTEMPTS:3}
+    backoff:
+      seconds: ${DLQ_RETRY_BACKOFF_SECONDS:1}
+  process:
+    interval: ${DLQ_PROCESS_INTERVAL:10000}
+
+event:
+  persistence:
+    topics:
+      orders:
+        persistToDisk: ${EVENT_PERSISTENCE_ORDERS_PERSIST_TO_DISK:true}
+        importance: ${EVENT_PERSISTENCE_ORDERS_IMPORTANCE:HIGH}
+      other-topic:
+        persistToDisk: ${EVENT_PERSISTENCE_OTHER_TOPIC_PERSIST_TO_DISK:false}
+        importance: ${EVENT_PERSISTENCE_OTHER_TOPIC_IMPORTANCE:LOW}
+
+logging:
+  level:
+    com.example.order: DEBUG
+    org.springframework.r2dbc: DEBUG
+    org.springframework.transaction: DEBUG
+    io.r2dbc.mysql: DEBUG # Para ver las consultas SQL específicas de MySQL
+    org.testcontainers: INFO # Cambiado a INFO para reducir el ruido en los logs
+    # Agregar estos para evitar ruido:
+    org.springframework.boot.autoconfigure: WARN
+    io.github.resilience4j: WARN
+    org.springframework.cloud: WARN
+
+app:
+  id:
+    check-collisions: ${APP_ID_CHECK_COLLISIONS:true}
+  node-id: ${APP_NODE_ID:0}
+
+# Mejorar la configuración de resilience4j:
+resilience4j:
+  fallback:
+    enabled: false
+  circuitbreaker:
+    enabled: true
+    configs:
+      default:
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+    instances:
+      event-repository:
+        base-config: default
+  retry:
+    enabled: true
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 500ms
+        retry-exceptions:
+          - java.lang.RuntimeException
+          - org.springframework.dao.TransientDataAccessException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+          - java.util.concurrent.TimeoutException
+        ignore-exceptions:
+          - java.lang.IllegalArgumentException
+          - org.springframework.dao.DuplicateKeyException
+          - org.springframework.dao.DataIntegrityViolationException
+    instances:
+      event-repository:
+        base-config: default

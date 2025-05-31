@@ -28,6 +28,12 @@ public abstract class AbstractReactiveRepository {
     protected static final Duration INITIAL_BACKOFF = Duration.ofMillis(100);
     protected static final Duration MAX_BACKOFF = Duration.ofSeconds(1);
 
+    protected boolean internalRetryEnabled = true;
+
+    public void setInternalRetryEnabled(boolean enabled) {
+        this.internalRetryEnabled = enabled;
+    }
+
     protected final DatabaseClient databaseClient;
     protected final TransactionalOperator transactionalOperator;
     protected final SecurityUtils securityUtils;
@@ -48,9 +54,13 @@ public abstract class AbstractReactiveRepository {
      * Aplica timeout y manejo de errores estándar a una operación de base de datos
      */
     protected <T> Mono<T> withTimeoutsAndRetries(Mono<T> mono, String operationName) {
-        return mono
-                .timeout(DB_OPERATION_TIMEOUT)
-                .retryWhen(createRetrySpec(operationName))
+        Mono<T> timedMono = mono.timeout(DB_OPERATION_TIMEOUT);
+
+        if (internalRetryEnabled) {
+            timedMono = timedMono.retryWhen(createRetrySpec(operationName));
+        }
+
+        return timedMono
                 .timeout(GLOBAL_TIMEOUT) // Timeout global después de reintentos
                 .onErrorResume(TimeoutException.class, e -> {
                     String errorMsg = "Timeout executing " + operationName + ": " + e.getMessage();

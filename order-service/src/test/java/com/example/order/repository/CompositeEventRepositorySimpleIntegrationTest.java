@@ -98,6 +98,9 @@ public class CompositeEventRepositorySimpleIntegrationTest {
                 redisTemplate.delete(redisTemplate.keys("*"))
         ).block(Duration.ofSeconds(5));
 
+        // Disable internal retries for ProcessedEventRepository during these tests
+        processedEventRepository.setInternalRetryEnabled(false);
+
         // Crear instancia simplificada para el test
         compositeEventRepository = new CompositeEventRepository(
                 new SimpleMeterRegistry(),

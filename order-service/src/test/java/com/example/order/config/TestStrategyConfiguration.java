@@ -17,14 +17,14 @@ public class TestStrategyConfiguration {
      * Se marca como @Primary para que Spring lo use por defecto en lugar de las 3 implementaciones reales
      */
     @Bean
-    @Primary
+    // @Primary // Removed to resolve conflict, testDynamicOrderService will be the primary OrderService mock
     @Profile("integration-test")
     public OrderService testOrderService() {
         return Mockito.mock(OrderService.class);
     }
 
     @Bean
-    @Primary
+    @Primary // This will be the primary mock for OrderService via DynamicOrderService
     @Profile("integration-test")
     public DynamicOrderService testDynamicOrderService() {
         return Mockito.mock(DynamicOrderService.class);
