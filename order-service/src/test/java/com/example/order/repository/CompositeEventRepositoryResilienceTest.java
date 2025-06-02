@@ -8,6 +8,7 @@ import com.example.order.actuator.StrategyConfigurationManager;
 import com.example.order.config.TestStrategyConfiguration;
 import com.example.order.domain.DeliveryMode;
 import com.example.order.repository.events.ProcessedEventRepository;
+import com.example.order.repository.orders.OrderRepository; // Added import
 import com.example.order.service.OrderService;
 import com.example.order.service.SagaOrchestrator;
 // Added
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean; // Added/Ensured import
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.ActiveProfiles;
 import reactor.core.publisher.Mono;
@@ -65,14 +67,14 @@ public class CompositeEventRepositoryResilienceTest {
     private SagaOrchestrator mockAtLeastOnceSagaOrchestrator;
 
     @MockitoBean
-    @Qualifier("sagaOrchestratorImpl2")
+    @Qualifier("atMostOnce") // Changed qualifier
     private SagaOrchestrator mockAtMostOnceSagaOrchestrator;
 
     @MockitoBean
     private ProcessedEventRepository processedEventRepository;
 
-    @MockitoBean
-    private com.example.order.repository.orders.OrderRepository orderRepository;
+    @Autowired // Changed from MockBean to Autowired
+    private OrderRepository mockOrderRepository;
 
     @MockitoBean
     private com.example.order.repository.saga.SagaFailureRepository sagaFailureRepository;
@@ -83,9 +85,12 @@ public class CompositeEventRepositoryResilienceTest {
     @MockitoBean
     private com.example.order.repository.transactions.TransactionLockRepository transactionLockRepository;
 
+    @MockitoBean
+    private com.example.order.controller.OrderController orderController;
+
     @BeforeEach
     void setUp() {
-        reset(processedEventRepository, orderRepository, sagaFailureRepository,
+        reset(processedEventRepository, mockOrderRepository, sagaFailureRepository,
                 eventHistoryRepository, transactionLockRepository);
     }
     @Test

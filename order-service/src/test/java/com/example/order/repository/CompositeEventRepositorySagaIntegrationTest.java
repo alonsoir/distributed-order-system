@@ -10,20 +10,24 @@ import com.example.order.repository.events.ProcessedEventRepository;
 import com.example.order.repository.orders.OrderRepository;
 import com.example.order.repository.saga.SagaFailureRepository;
 import com.example.order.repository.transactions.TransactionLockRepository;
-import com.example.order.service.v2.SagaOrchestratorAtLeastOnceImplV2;
-import com.example.order.service.v2.SagaOrchestratorAtMostOnceImplV2;
+import com.example.order.service.SagaOrchestrator; // Import interface
+import com.example.order.actuator.StrategyConfigurationManager; // Added import
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier; // Import Qualifier
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.context.TestConfiguration; // <<< ADD IMPORT
+import org.springframework.boot.test.mock.mockito.MockBean; // Import MockBean
+import org.springframework.context.annotation.Bean; // <<< ADD IMPORT
+import org.springframework.context.annotation.Primary; // <<< ADD IMPORT
 import org.springframework.test.context.ActiveProfiles;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import org.mockito.Mockito; // <<< ADD IMPORT
 
 /**
  * Test de integración para CompositeEventRepository que verifica su funcionamiento
@@ -31,33 +35,52 @@ import static org.mockito.Mockito.*;
  */
 @SpringBootTest
 @ActiveProfiles("integration-test") // Changed from "test" to "integration-test"
-@Import(CompositeEventRepository.class) // Importar explícitamente la clase bajo prueba
+// @Import(CompositeEventRepository.class) // Importar explícitamente la clase bajo prueba -- REMOVED
 public class CompositeEventRepositorySagaIntegrationTest {
+
+    @TestConfiguration
+    static class TestConfig {
+        @Bean
+        @Primary
+        public OrderRepository primaryMockOrderRepository() {
+            return Mockito.mock(OrderRepository.class);
+        }
+    }
 
     @Autowired
     private CompositeEventRepository compositeEventRepository;
 
-    // Usar @Mock en lugar de @MockBean
-    @Mock
+    @MockBean // Changed from @Mock to @MockBean
     private ProcessedEventRepository processedEventRepository;
 
-    @Mock
-    private OrderRepository orderRepository;
+    //vvv REMOVE THIS MOCK FOR OrderRepositoryImpl vvv
+    // @MockBean // Changed from @Mock to @MockBean
+    // private com.example.order.repository.orders.OrderRepositoryImpl orderRepositoryImpl; // Changed to OrderRepositoryImpl
+    //^^^ REMOVE THIS MOCK FOR OrderRepositoryImpl ^^^
 
-    @Mock
+    // Use the @Primary @Bean from TestConfig instead of marking this @MockBean as primary
+    @MockBean
+    private OrderRepository orderRepository; // <<< USE THE INTERFACE TYPE
+
+    @MockBean // Changed from @Mock to @MockBean
     private SagaFailureRepository sagaFailureRepository;
 
-    @Mock
+    @MockBean // Changed from @Mock to @MockBean
     private EventHistoryRepository eventHistoryRepository;
 
-    @Mock
+    @MockBean // Changed from @Mock to @MockBean
     private TransactionLockRepository transactionLockRepository;
 
-    @Mock
-    private SagaOrchestratorAtMostOnceImplV2 sagaOrchestratorAtMostOnce;
+    @MockBean // Changed from @Mock to @MockBean and type to interface
+    @Qualifier("sagaOrchestratorImpl2")
+    private SagaOrchestrator sagaOrchestratorAtMostOnce;
 
-    @Mock
-    private SagaOrchestratorAtLeastOnceImplV2 sagaOrchestratorAtLeastOnce;
+    @MockBean // Changed from @Mock to @MockBean and type to interface
+    @Qualifier("atLeastOnce")
+    private SagaOrchestrator sagaOrchestratorAtLeastOnce;
+
+    @MockBean
+    private StrategyConfigurationManager strategyConfigurationManager;
 
     @Test
     @DisplayName("Verifica flujo AT_MOST_ONCE con idempotencia")
@@ -152,7 +175,7 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 .thenReturn(Mono.just(true));
 
         // 2. Guardar datos de la orden
-        when(orderRepository.saveOrderData(
+        when(orderRepository.saveOrderData( // <<< Use new 'orderRepository' mock
                 eq(orderId),
                 eq(correlationId),
                 eq(eventId),
@@ -161,15 +184,15 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 .thenReturn(Mono.empty());
 
         // 3. Buscar la orden
-        when(orderRepository.findOrderById(orderId))
+        when(orderRepository.findOrderById(orderId)) // <<< Use new 'orderRepository' mock
                 .thenReturn(Mono.just(mockOrder));
 
         // 4. Actualizar estado
-        when(orderRepository.updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId))
+        when(orderRepository.updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId)) // <<< Use new 'orderRepository' mock
                 .thenReturn(Mono.just(mockOrder));
 
         // 5. Insertar log de auditoría
-        when(orderRepository.insertStatusAuditLog(orderId, OrderStatus.ORDER_COMPLETED, correlationId))
+        when(orderRepository.insertStatusAuditLog(orderId, OrderStatus.ORDER_COMPLETED, correlationId)) // <<< Use new 'orderRepository' mock
                 .thenReturn(Mono.empty());
 
         // 6. Guardar historial del evento
@@ -219,15 +242,15 @@ public class CompositeEventRepositorySagaIntegrationTest {
 
         // Verificar llamadas a los repositorios
         verify(processedEventRepository).checkAndMarkEventAsProcessed(eventId, DeliveryMode.AT_MOST_ONCE);
-        verify(orderRepository).saveOrderData(
+        verify(orderRepository).saveOrderData( // <<< Use new 'orderRepository' mock
                 eq(orderId),
                 eq(correlationId),
                 eq(eventId),
                 any(OrderEvent.class),
                 eq(DeliveryMode.AT_MOST_ONCE));
-        verify(orderRepository).findOrderById(orderId);
-        verify(orderRepository).updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId);
-        verify(orderRepository).insertStatusAuditLog(orderId, OrderStatus.ORDER_COMPLETED, correlationId);
+        verify(orderRepository).findOrderById(orderId); // <<< Use new 'orderRepository' mock
+        verify(orderRepository).updateOrderStatus(orderId, OrderStatus.ORDER_COMPLETED, correlationId); // <<< Use new 'orderRepository' mock
+        verify(orderRepository).insertStatusAuditLog(orderId, OrderStatus.ORDER_COMPLETED, correlationId); // <<< Use new 'orderRepository' mock
         verify(eventHistoryRepository).saveEventHistory(
                 eq(eventId),
                 eq(correlationId),
@@ -262,7 +285,7 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 .thenReturn(Mono.just(true));
 
         // La operación de guardar datos falla
-        when(orderRepository.saveOrderData(eq(orderId), eq(correlationId), eq(eventId), any(OrderEvent.class), eq(deliveryMode)))
+        when(orderRepository.saveOrderData(eq(orderId), eq(correlationId), eq(eventId), any(OrderEvent.class), eq(deliveryMode))) // <<< Use new 'orderRepository' mock
                 .thenReturn(Mono.error(stockError));
 
         // Configurar registro de errores
@@ -281,7 +304,7 @@ public class CompositeEventRepositorySagaIntegrationTest {
         when(failedOrder.id()).thenReturn(orderId);
         when(failedOrder.status()).thenReturn(OrderStatus.ORDER_FAILED);
 
-        when(orderRepository.updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId))
+        when(orderRepository.updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId)) // <<< Use new 'orderRepository' mock
                 .thenReturn(Mono.just(failedOrder));
 
         // Ejecutar flujo con error
@@ -297,7 +320,7 @@ public class CompositeEventRepositorySagaIntegrationTest {
 
         // Verificar las llamadas realizadas
         verify(processedEventRepository).checkAndMarkEventAsProcessed(eventId, deliveryMode);
-        verify(orderRepository).saveOrderData(eq(orderId), eq(correlationId), eq(eventId), any(OrderEvent.class), eq(deliveryMode));
+        verify(orderRepository).saveOrderData(eq(orderId), eq(correlationId), eq(eventId), any(OrderEvent.class), eq(deliveryMode)); // <<< Use new 'orderRepository' mock
 
         // Ahora simulamos el registro del error
         when(sagaFailureRepository.recordSagaFailure(
@@ -329,7 +352,7 @@ public class CompositeEventRepositorySagaIntegrationTest {
                 anyString(),
                 eq("RuntimeException"),
                 eq(deliveryMode));
-        verify(orderRepository).updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId);
+        verify(orderRepository).updateOrderStatus(orderId, OrderStatus.ORDER_FAILED, correlationId); // <<< Use new 'orderRepository' mock
     }
 
     @Test

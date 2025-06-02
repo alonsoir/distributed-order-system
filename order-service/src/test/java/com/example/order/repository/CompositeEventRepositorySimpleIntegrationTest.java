@@ -172,7 +172,6 @@ public class CompositeEventRepositorySimpleIntegrationTest {
     @Configuration
     @EnableAutoConfiguration(exclude = {
             // Excluir autoconfiguraciones problemáticas
-            io.github.resilience4j.springboot3.fallback.autoconfigure.FallbackConfigurationOnMissingBean.class,
             org.springframework.boot.actuate.autoconfigure.metrics.MetricsAutoConfiguration.class,
             org.springframework.cloud.autoconfigure.RefreshAutoConfiguration.class
     })

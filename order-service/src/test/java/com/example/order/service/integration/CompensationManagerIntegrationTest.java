@@ -3,14 +3,18 @@ package com.example.order.service.integration;
 import com.example.order.model.SagaStep;
 import com.example.order.service.CompensationManager;
 import com.example.order.service.CompensationTask;
+import com.example.order.service.SagaOrchestrator; // Added
+import com.example.order.actuator.StrategyConfigurationManager; // Added import
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier; // Added
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.mock.mockito.MockBean; // Added
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
@@ -46,6 +50,18 @@ class CompensationManagerIntegrationTest {
 
     private final AtomicInteger compensationCallCounter = new AtomicInteger(0);
     private final AtomicBoolean shouldCompensationFail = new AtomicBoolean(false);
+
+    // Added MockBeans for SagaOrchestrators to help context load
+    @MockBean
+    @Qualifier("atLeastOnce")
+    private SagaOrchestrator mockAtLeastOnceSagaOrchestrator;
+
+    @MockBean
+    @Qualifier("sagaOrchestratorImpl2")
+    private SagaOrchestrator mockAtMostOnceSagaOrchestrator;
+
+    @MockBean
+    private StrategyConfigurationManager strategyConfigurationManager;
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {

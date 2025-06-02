@@ -4,12 +4,15 @@ import com.example.order.domain.Order;
 import com.example.order.domain.OrderStatus;
 import com.example.order.repository.EventRepository;
 import com.example.order.service.SagaOrchestrator;
+import com.example.order.actuator.StrategyConfigurationManager; // Added import
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
+// import org.mockito.Mock; // Removed
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier; // Added
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean; // Added
 import org.springframework.test.context.ActiveProfiles;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -24,10 +27,23 @@ import static org.mockito.Mockito.*;
 class OrderStatusConsistencyTest {
 
     @Autowired
+    @Qualifier("atLeastOnce") // Assuming we want to test this one, or it could be ambiguous
     private SagaOrchestrator sagaOrchestrator;
 
-    @Mock
-    private EventRepository eventRepository;
+    @MockBean(name = "compositeEventRepository") // Changed from @Mock and specified name
+    private EventRepository eventRepositoryMockForTest;
+
+    // Added MockBeans for SagaOrchestrators to help context load
+    @MockBean
+    @Qualifier("atLeastOnce")
+    private SagaOrchestrator mockAtLeastOnceSagaOrchestrator;
+
+    @MockBean
+    @Qualifier("atMostOnce")
+    private SagaOrchestrator mockAtMostOnceSagaOrchestrator;
+
+    @MockBean
+    private StrategyConfigurationManager strategyConfigurationManager;
 
     @Test
     @DisplayName("Verifica consistencia en manejo de estados entre string y enum")
@@ -39,11 +55,11 @@ class OrderStatusConsistencyTest {
         ArgumentCaptor<OrderStatus> statusCaptor = ArgumentCaptor.forClass(OrderStatus.class);
 
         // Mock de findOrderById para retornar una orden con estado PENDING
-        when(eventRepository.findOrderById(anyLong()))
+        when(eventRepositoryMockForTest.findOrderById(anyLong()))
                 .thenReturn(Mono.just(new Order(orderId, OrderStatus.ORDER_PENDING, correlationId)));
 
         // Mock de updateOrderStatus para capturar el argumento de estado
-        when(eventRepository.updateOrderStatus(anyLong(), statusCaptor.capture(), anyString()))
+        when(eventRepositoryMockForTest.updateOrderStatus(anyLong(), statusCaptor.capture(), anyString()))
                 .thenAnswer(invocation -> {
                     String status = invocation.getArgument(1);
                     return Mono.just(new Order(orderId, OrderStatus.fromValue(status), correlationId));

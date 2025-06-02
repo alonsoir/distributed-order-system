@@ -1,5 +1,6 @@
 package com.example.order.config;
 
+import com.example.order.repository.orders.OrderRepository; // Added import
 import com.example.order.service.DynamicOrderService;
 import com.example.order.service.OrderService;
 import org.mockito.Mockito;
@@ -30,5 +31,10 @@ public class TestStrategyConfiguration {
         return Mockito.mock(DynamicOrderService.class);
     }
 
-
+    @Bean
+    @Primary
+    @Profile("integration-test")
+    public OrderRepository mockOrderRepository() {
+        return Mockito.mock(OrderRepository.class);
+    }
 }
