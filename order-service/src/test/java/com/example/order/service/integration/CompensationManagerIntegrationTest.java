@@ -2,7 +2,6 @@ package com.example.order.service.integration;
 
 import com.example.order.model.SagaStep;
 import com.example.order.service.CompensationManager;
-import com.example.order.service.CompensationManagerImpl;
 import com.example.order.service.CompensationTask;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
